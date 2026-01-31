@@ -1,0 +1,19 @@
+# Core Framework
+chainlit>=1.0.0
+langgraph>=0.2.0
+langchain>=0.2.0
+langchain-anthropic>=0.2.0
+langchain-openai>=0.2.0
+
+# Data & Search
+tavily-python>=0.4.0
+python-frontmatter>=1.1.0
+pandas>=2.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+pydantic>=2.0.0
+
+# Optional: for financial data
+yfinance>=0.2.0
