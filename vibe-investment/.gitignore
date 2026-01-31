@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Environment
+.env
+.env.local
+
+# Data (用户数据，不提交)
+data/debates/*.md
+!data/debates/.gitkeep
+data/portfolio/*.md
+!data/portfolio/.gitkeep
+
+# Chainlit
+.chainlit/files/
+.chainlit/translations/
+.files/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
