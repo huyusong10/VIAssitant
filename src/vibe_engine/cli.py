@@ -654,9 +654,14 @@ def _build_prompt_style():
 def _build_prompt_session():
     """Build a prompt_toolkit PromptSession with slash autocomplete.
 
+    Uses Buffer.on_text_changed to trigger the completion popup whenever
+    the user is typing a slash command.  This is more reliable than
+    complete_while_typing (which doesn't always trigger) or key bindings
+    (which create one-shot states that disappear on the next keystroke).
+
     Features:
-    - Typing '/' at the start of a line opens a dropdown of all commands
-    - Each completion shows the command name + a description (display_meta)
+    - Typing '/' at the start opens a dropdown of all 11 commands
+    - Each item shows the command name + a description
     - Continue typing to narrow the list (e.g. '/ex' → /exit, /experts, /export)
     - Arrow keys or Tab to navigate, Enter to select
     - Input history persisted across sessions
@@ -672,12 +677,24 @@ def _build_prompt_session():
         message=[("class:prompt", "vibe> ")],
         style=_build_prompt_style(),
         completer=_build_vibe_completer(),
-        complete_while_typing=True,
-        complete_in_thread=False,
+        complete_while_typing=False,   # We trigger manually via on_text_changed
         reserve_space_for_menu=12,
         history=FileHistory(histfile),
         enable_history_search=True,
     )
+
+    # --- Auto-trigger completion when typing slash commands ---
+    def _on_text_changed(buf):
+        """Re-trigger completion popup whenever text looks like a slash command."""
+        text = buf.text.lstrip()
+        if text.startswith("/"):
+            # Only while typing the command name (no space yet = no args)
+            after_slash = text[1:]
+            if " " not in after_slash:
+                buf.start_completion(select_first=False)
+
+    session.default_buffer.on_text_changed += _on_text_changed
+
     return session
 
 
