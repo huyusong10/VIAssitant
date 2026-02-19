@@ -20,6 +20,13 @@ def get_expert_system_prompt(expert_id: int) -> str:
     dims = {d["id"]: d for d in EXPERT_DIMENSIONS}
     if expert_id not in dims:
         raise ValueError(f"Unknown expert_id: {expert_id}")
+
+    # 1. Try specific expert file: experts/expert_{id}.md
+    specific_path = _PROMPTS_DIR / "experts" / f"expert_{expert_id}.md"
+    if specific_path.exists():
+        return specific_path.read_text(encoding="utf-8")
+
+    # 2. Fallback to generic template
     dim = dims[expert_id]
     template = _load("expert_system.md")
     return template.format(name=dim["name"], description=dim["description"])

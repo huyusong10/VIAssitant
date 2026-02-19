@@ -25,11 +25,11 @@
 
 **目标**：建立可运行的最小项目结构，确保工具链畅通。
 
-- [ ] **S0.1** 使用 `uv` 初始化 Python 项目，创建 `pyproject.toml`
+- [x] **S0.1** 使用 `uv` 初始化 Python 项目，创建 `pyproject.toml`
   - 验证：`uv sync` 成功，无报错
-- [ ] **S0.2** 安装核心依赖：`langgraph`, `langchain-openai`（DeepSeek 兼容）, `rich`（CLI 美化）
+- [x] **S0.2** 安装核心依赖：`langgraph`, `langchain-openai`（DeepSeek 兼容）, `rich`（CLI 美化）
   - 验证：`uv run python -c "import langgraph; print('ok')"` 输出 ok
-- [ ] **S0.3** 创建项目目录结构：
+- [x] **S0.3** 创建项目目录结构：
   ```
   src/
     vibe_engine/
@@ -48,9 +48,9 @@
     main.py            # 程序入口
   ```
   - 验证：`uv run python src/main.py --help` 能输出帮助信息（哪怕只有 placeholder）
-- [ ] **S0.4** 配置 DeepSeek API 连接（通过环境变量 `DEEPSEEK_API_KEY`）
+- [x] **S0.4** 配置 DeepSeek API 连接（通过环境变量 `DEEPSEEK_API_KEY`）
   - 验证：写一个最小脚本调用 DeepSeek Chat 模型，返回 "Hello"
-- [ ] **S0.5** 定义全局 `State` TypedDict，包含最小字段：`vibe`, `messages`, `phase`, `round`
+- [x] **S0.5** 定义全局 `State` TypedDict，包含最小字段：`vibe`, `messages`, `phase`, `round`
   - 验证：能 import State 且类型检查通过（`mypy` 或手动 assert）
 
 **完成标志**：项目能安装、能运行、能连通 LLM API。
@@ -61,14 +61,14 @@
 
 **目标**：验证"LLM 节点接收 Vibe → 输出结构化分析"的最小闭环。
 
-- [ ] **S1.1** 实现 1 个 Expert 节点函数，接收 State，调用 DeepSeek Reasoner，返回结构化输出
+- [x] **S1.1** 实现 1 个 Expert 节点函数，接收 State，调用 DeepSeek Reasoner，返回结构化输出
   - 输出格式要求：`逻辑链条` / `精简结论` / `核心风险点` 三段
   - 验证：传入一段硬编码 Vibe，检查返回的字典包含三个必须字段且非空
-- [ ] **S1.2** 构建最小 LangGraph 图：`START → expert_node → END`
+- [x] **S1.2** 构建最小 LangGraph 图：`START → expert_node → END`
   - 验证：`graph.invoke({"vibe": "看好新能源"})` 返回包含 expert 分析的 State
-- [ ] **S1.3** 实现 Prompt 模板管理：专家的系统 prompt 从配置加载，包含维度名称和角色描述
+- [x] **S1.3** 实现 Prompt 模板管理：专家的系统 prompt 从配置加载，包含维度名称和角色描述
   - 验证：修改配置中的专家维度名称，输出的分析风格随之变化（人工判读）
-- [ ] **S1.4** 保留专家完整思考过程（`<think>` 内容）到 State 中
+- [x] **S1.4** 保留专家完整思考过程（`<think>` 内容）到 State 中
   - 验证：State 中存在 `expert_thoughts` 字段，内容长度 > 0
 
 **完成标志**：一个专家能独立完成从 Vibe 到结构化分析的完整路径。
