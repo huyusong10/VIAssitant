@@ -6,6 +6,11 @@ All styles follow the Oceanic theme (cyan chrome, semantic accents).
 IMPORTANT: Avoids the ANSI 'dim' attribute (SGR 2) entirely because it
 renders incorrectly in many terminals (Tabby, some iTerm2 profiles, etc.).
 Secondary text is conveyed through lack of bold/color, or via 'italic'.
+
+C3 additions:
+- PHASE_REQUIREMENTS: per-phase output expectations (used in dispatch briefs)
+- render_phase_transition(): animated phase transition banner with stats
+- render_elapsed_stats_table(): final elapsed-time statistics after analysis
 """
 
 from typing import Any
@@ -17,6 +22,7 @@ from rich.rule import Rule
 from rich.markdown import Markdown
 from rich.table import Table
 from rich.align import Align
+from rich.columns import Columns
 
 VERSION = "0.1.0"
 
@@ -34,6 +40,22 @@ MODE_TO_PHASES = {
     "1+2+3": ["discovery", "targeting", "validation"],
     "full": ["discovery", "targeting", "validation"],
 }
+
+# C3: Per-phase output requirements — displayed in dispatch briefs for context
+PHASE_REQUIREMENTS = {
+    "discovery": "挖掘核心逻辑链条与风险点",
+    "targeting": "输出具体投资标的",
+    "validation": "构建数据推导链验证标的",
+}
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    """Format seconds into a human-readable string."""
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
 
 
 def display_welcome(console: Console, interactive: bool = True):
@@ -223,4 +245,141 @@ def render_completion_banner(console: Console, state: dict, elapsed: float):
         f" · {len(phases_run)} 阶段"
         f" · {expert_count} 位专家"
         f" · 耗时 {time_str}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C3.3 — Phase transition rendering
+# ---------------------------------------------------------------------------
+
+
+def render_phase_transition(
+    old_phase: str, new_phase: str, phase_stat: dict
+) -> Panel:
+    """Render a visual phase transition banner with stats.
+
+    Shows: old phase completion stats → new phase announcement.
+    C3.3: Clear visual separation between phases with timing info.
+
+    Args:
+        old_phase: The phase that just completed.
+        new_phase: The phase about to start.
+        phase_stat: Stats dict with keys: phase, rounds, experts, elapsed.
+
+    Returns:
+        A Rich Panel renderable.
+    """
+    old_name = PHASE_NAMES.get(old_phase, old_phase)
+    new_name = PHASE_NAMES.get(new_phase, new_phase)
+    elapsed_str = _fmt_elapsed(phase_stat.get("elapsed", 0))
+    rounds = phase_stat.get("rounds", 0)
+    experts = phase_stat.get("experts", 0)
+
+    new_req = PHASE_REQUIREMENTS.get(new_phase, "")
+    req_line = f"\n[bold]阶段目标：[/bold]{new_req}" if new_req else ""
+
+    content = (
+        f"[bold green]✓ {old_name} 完成[/bold green]"
+        f"  ({rounds} 轮 · {experts} 位专家 · {elapsed_str})\n"
+        f"\n[bold cyan]→ 进入 {new_name}[/bold cyan]"
+        f"{req_line}"
+    )
+
+    return Panel(
+        content,
+        title=f"[bold yellow]⚡ 阶段转换[/bold yellow]",
+        border_style="yellow",
+        padding=(0, 2),
+    )
+
+
+# ---------------------------------------------------------------------------
+# C3.5 — Elapsed time statistics table
+# ---------------------------------------------------------------------------
+
+
+def render_elapsed_stats_table(
+    phase_stats: list[dict],
+    expert_elapsed: dict[int, float],
+    expert_map: dict[int, str],
+    total_elapsed: float,
+) -> Panel:
+    """Render a comprehensive timing statistics panel.
+
+    C3.5: Shown after analysis completes — total, per-phase, per-expert breakdown.
+
+    Args:
+        phase_stats: List of per-phase stats dicts.
+        expert_elapsed: Maps expert_id → elapsed seconds.
+        expert_map: Maps expert_id → expert name.
+        total_elapsed: Overall elapsed time.
+
+    Returns:
+        A Rich Panel renderable.
+    """
+    content_parts = []
+
+    # Total elapsed
+    content_parts.append(
+        f"[bold]总耗时：[/bold] {_fmt_elapsed(total_elapsed)}\n"
+    )
+
+    # Per-phase breakdown
+    if phase_stats:
+        phase_table = Table(
+            show_header=True, header_style="bold cyan",
+            border_style="cyan", padding=(0, 1),
+            title="[bold]阶段耗时[/bold]",
+        )
+        phase_table.add_column("阶段", style="cyan", min_width=10)
+        phase_table.add_column("轮次", justify="center", min_width=6)
+        phase_table.add_column("专家数", justify="center", min_width=6)
+        phase_table.add_column("耗时", justify="right", min_width=8)
+        phase_table.add_column("占比", justify="right", min_width=8)
+
+        for ps in phase_stats:
+            phase_name = PHASE_NAMES.get(ps["phase"], ps["phase"])
+            elapsed = ps.get("elapsed", 0)
+            pct = (elapsed / total_elapsed * 100) if total_elapsed > 0 else 0
+            phase_table.add_row(
+                phase_name,
+                str(ps.get("rounds", 0)),
+                str(ps.get("experts", 0)),
+                _fmt_elapsed(elapsed),
+                f"{pct:.1f}%",
+            )
+
+        content_parts.append(phase_table)
+
+    # Per-expert breakdown (sorted by elapsed time, descending)
+    if expert_elapsed:
+        expert_table = Table(
+            show_header=True, header_style="bold cyan",
+            border_style="cyan", padding=(0, 1),
+            title="\n[bold]专家耗时排名[/bold]",
+        )
+        expert_table.add_column("排名", justify="center", min_width=4)
+        expert_table.add_column("专家", style="cyan", min_width=14)
+        expert_table.add_column("耗时", justify="right", min_width=8)
+
+        sorted_experts = sorted(
+            expert_elapsed.items(), key=lambda x: x[1], reverse=True
+        )
+        for rank, (eid, elapsed) in enumerate(sorted_experts, 1):
+            ename = expert_map.get(eid, f"专家 {eid}")
+            expert_table.add_row(
+                str(rank),
+                f"[{eid}] {ename}",
+                _fmt_elapsed(elapsed),
+            )
+
+        content_parts.append(expert_table)
+
+    # Build final renderables
+    from rich.console import Group
+    return Panel(
+        Group(*content_parts),
+        title="[bold cyan]⏱ 耗时统计[/bold cyan]",
+        border_style="cyan",
+        padding=(0, 1),
     )

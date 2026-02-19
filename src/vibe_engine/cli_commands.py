@@ -1,12 +1,24 @@
-"""Slash command system for the Vibe CLI REPL.
+"""Slash command system for the Vibe CLI REPL (C2 complete).
 
 Provides a CommandRegistry for registering and dispatching slash commands,
 plus built-in command implementations.
+
+C2 command set:
+  C2.1  CommandRegistry with alias support
+  C2.2  Core: /help, /status, /stop, /clear
+  C2.3  Analysis: /think, /experts, /summary, /mode
+  C2.4  Export: /export md, /export json
+  C2.5  Config: /config show, /config set
 """
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from rich.console import Console
@@ -26,6 +38,7 @@ class CommandContext:
     # Callbacks
     request_exit: Callable[[], None] | None = None
     set_mode: Callable[[str], None] | None = None
+    request_stop: Callable[[], None] | None = None
 
 
 @dataclass
@@ -87,6 +100,14 @@ class CommandRegistry:
     def get_all_commands(self) -> list[Command]:
         return list(self._commands.values())
 
+    def get_completions(self) -> list[tuple[str, str]]:
+        """Return (name, help_text) tuples for all commands — used by autocomplete."""
+        result = []
+        for cmd in self._commands.values():
+            usage_str = f" {cmd.usage}" if cmd.usage else ""
+            result.append((f"/{cmd.name}{usage_str}", cmd.help_text))
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Built-in command implementations
@@ -120,14 +141,15 @@ def cmd_help(ctx: CommandContext, args: list[str]):
         show_header=True, header_style="bold cyan",
         border_style="cyan", padding=(0, 2),
     )
-    table.add_column("命令", style="cyan", min_width=16)
+    table.add_column("命令", style="cyan", min_width=20)
     table.add_column("说明")
     for cmd in registry.get_all_commands():
         usage_str = f" {cmd.usage}" if cmd.usage else ""
         table.add_row(f"/{cmd.name}{usage_str}", cmd.help_text)
     ctx.console.print(table)
     ctx.console.print(
-        "\n[italic]提示：直接输入文本即作为 Vibe 启动分析 · Ctrl+C 中断分析[/italic]\n"
+        "\n[italic]提示：直接输入文本即作为 Vibe 启动分析 · "
+        "输入 / 即可看到命令提示[/italic]\n"
     )
 
 
@@ -140,6 +162,18 @@ def cmd_exit(ctx: CommandContext, args: list[str]):
 def cmd_clear(ctx: CommandContext, args: list[str]):
     """Clear the terminal screen."""
     ctx.console.clear()
+
+
+def cmd_stop(ctx: CommandContext, args: list[str]):
+    """Stop the currently running analysis."""
+    if not ctx.is_analyzing:
+        ctx.console.print("当前没有正在运行的分析。")
+        return
+    if ctx.request_stop:
+        ctx.request_stop()
+        ctx.console.print("[yellow]正在停止分析...[/yellow]")
+    else:
+        ctx.console.print("[yellow]使用 Ctrl+C 中断当前分析。[/yellow]")
 
 
 def cmd_status(ctx: CommandContext, args: list[str]):
@@ -331,6 +365,275 @@ def cmd_mode(ctx: CommandContext, args: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# C2.4 — Export commands
+# ---------------------------------------------------------------------------
+
+
+def _slugify(text: str, max_len: int = 30) -> str:
+    """Convert text to a safe filename slug."""
+    # Keep CJK characters, alphanumerics, and hyphens
+    slug = re.sub(r'[^\w\u4e00-\u9fff-]', '_', text)
+    slug = re.sub(r'_+', '_', slug).strip('_')
+    return slug[:max_len] if slug else "analysis"
+
+
+def cmd_export(ctx: CommandContext, args: list[str]):
+    """Export analysis results to a file (md or json)."""
+    if ctx.last_state is None:
+        ctx.console.print("尚无分析结果。请先输入 Vibe 进行分析。")
+        return
+
+    fmt = args[0].strip().lower() if args else ""
+    if fmt not in ("md", "json"):
+        ctx.console.print(
+            "[bold]用法：[/bold] /export md  或  /export json\n"
+            "  [cyan]md[/cyan]   — 导出 Markdown 报告\n"
+            "  [cyan]json[/cyan] — 导出完整分析数据 (JSON)"
+        )
+        return
+
+    state = ctx.last_state
+    vibe = state.get("vibe_original", "analysis")
+    slug = _slugify(vibe)
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(".", "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    if fmt == "md":
+        _export_markdown(ctx, state, output_dir, date_str, slug)
+    else:
+        _export_json(ctx, state, output_dir, date_str, slug)
+
+
+def _export_markdown(ctx: CommandContext, state: dict, output_dir: str,
+                     date_str: str, slug: str):
+    """Export final report and expert summaries as Markdown."""
+    from vibe_engine.cli_display import PHASE_NAMES
+
+    filepath = os.path.join(output_dir, f"{date_str}_{slug}.md")
+    parts = []
+
+    # Header
+    vibe_orig = state.get("vibe_original", "")
+    parts.append(f"# Vibe 投资分析报告\n")
+    parts.append(f"> **Vibe**: {vibe_orig}\n")
+    parts.append(f"> **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    # Vibe evolution
+    vibe_history = state.get("vibe_history", [])
+    if len(vibe_history) > 1:
+        parts.append("\n## Vibe 演变轨迹\n")
+        for i, v in enumerate(vibe_history):
+            label = "原始" if i == 0 else f"变异 {i}"
+            parts.append(f"- **{label}**: {v}\n")
+
+    # Final report
+    final_report = state.get("final_report")
+    if final_report:
+        parts.append("\n## 最终报告\n")
+        parts.append(final_report + "\n")
+
+    # Expert summaries
+    expert_results = state.get("expert_results", [])
+    if expert_results:
+        parts.append("\n## 专家分析摘要\n")
+        for r in expert_results:
+            eid = r.get("expert_id", "?")
+            ename = r.get("expert_name", "?")
+            phase_name = PHASE_NAMES.get(r.get("phase", ""), "?")
+            parts.append(f"\n### 专家 {eid} · {ename} ({phase_name} R{r.get('round_num', '?')})\n")
+            parts.append(f"**结论**: {r.get('conclusion', '（无）')}\n\n")
+            parts.append(f"**风险**: {r.get('risk_points', '（无）')}\n\n")
+            targets = r.get("targets", [])
+            if targets:
+                parts.append(f"**标的**: {', '.join(targets)}\n\n")
+
+    content = "\n".join(parts)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    abs_path = os.path.abspath(filepath)
+    ctx.console.print(f"[green]✓ Markdown 报告已导出[/green]")
+    ctx.console.print(f"  [cyan]{abs_path}[/cyan]")
+    ctx.console.print(f"  ({len(content):,} 字)")
+
+
+def _export_json(ctx: CommandContext, state: dict, output_dir: str,
+                 date_str: str, slug: str):
+    """Export the full analysis state as JSON (excluding think_content by default)."""
+    filepath = os.path.join(output_dir, f"{date_str}_{slug}.json")
+
+    # Build export dict — strip think_content to keep file size manageable
+    export = {}
+    export["vibe_original"] = state.get("vibe_original", "")
+    export["vibe_history"] = state.get("vibe_history", [])
+    export["phase"] = state.get("phase", "")
+    export["round"] = state.get("round", 0)
+    export["abort_reason"] = state.get("abort_reason")
+    export["final_report"] = state.get("final_report")
+    export["exported_at"] = datetime.now().isoformat()
+
+    # Expert results without think_content
+    export["expert_results"] = []
+    for r in state.get("expert_results", []):
+        item = {k: v for k, v in r.items() if k != "think_content"}
+        item["think_content_length"] = len(r.get("think_content") or "")
+        export["expert_results"].append(item)
+
+    # Talent summaries without think_content
+    export["talent_summaries"] = []
+    for ts in state.get("talent_summaries", []):
+        item = {k: v for k, v in ts.items() if k != "think_content"}
+        item["think_content_length"] = len(ts.get("think_content") or "")
+        export["talent_summaries"].append(item)
+
+    export["planner_decisions"] = state.get("planner_decisions", [])
+
+    content = json.dumps(export, ensure_ascii=False, indent=2)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    abs_path = os.path.abspath(filepath)
+    ctx.console.print(f"[green]✓ JSON 数据已导出[/green]")
+    ctx.console.print(f"  [cyan]{abs_path}[/cyan]")
+    ctx.console.print(f"  ({len(content):,} 字)")
+    ctx.console.print(
+        "  [italic]注意：think_content 已省略以减小体积，"
+        "完整推理过程请在 REPL 中使用 /think 查看[/italic]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C2.5 — Config commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_config(ctx: CommandContext, args: list[str]):
+    """View or modify runtime configuration.
+
+    Usage:
+      /config           — show current configuration
+      /config show      — same as above
+      /config set <key> <value>  — modify a config value
+    """
+    from vibe_engine.config import PHASE_CONFIGS, MODEL_CHAT, MODEL_REASONER
+
+    sub = args[0].strip().lower() if args else "show"
+
+    if sub == "show":
+        _config_show(ctx)
+    elif sub == "set":
+        if len(args) < 3:
+            ctx.console.print(
+                "[bold]用法：[/bold] /config set <key> <value>\n"
+                "  可修改的 key：\n"
+                "  [cyan]discovery.max_rounds[/cyan]   价值发现最大轮数\n"
+                "  [cyan]targeting.max_rounds[/cyan]   标的锁定最大轮数\n"
+                "  [cyan]validation.max_rounds[/cyan]  逻辑验证最大轮数\n"
+                "  [cyan]discovery.expert_count_min[/cyan]  发现阶段最少专家数\n"
+                "  [cyan]discovery.expert_count_max[/cyan]  发现阶段最多专家数\n"
+                "  [cyan]targeting.expert_count_min[/cyan]  锁定阶段最少专家数\n"
+                "  [cyan]targeting.expert_count_max[/cyan]  锁定阶段最多专家数\n"
+                "  [cyan]validation.expert_count_min[/cyan] 验证阶段最少专家数\n"
+                "  [cyan]validation.expert_count_max[/cyan] 验证阶段最多专家数"
+            )
+            return
+        key = args[1].strip()
+        value = args[2].strip()
+        _config_set(ctx, key, value)
+    else:
+        ctx.console.print(
+            "[bold]用法：[/bold] /config [show|set]\n"
+            "  [cyan]/config show[/cyan]         查看当前配置\n"
+            "  [cyan]/config set <k> <v>[/cyan]  修改配置项"
+        )
+
+
+def _config_show(ctx: CommandContext):
+    """Display current runtime configuration."""
+    from vibe_engine.config import PHASE_CONFIGS, MODEL_CHAT, MODEL_REASONER
+    from vibe_engine.cli_display import PHASE_NAMES
+
+    table = Table(
+        title="[bold]运行时配置[/bold]",
+        show_header=True, header_style="bold cyan",
+        border_style="cyan", padding=(0, 2),
+    )
+    table.add_column("配置项", style="cyan", min_width=24)
+    table.add_column("值", min_width=12)
+
+    # Models
+    table.add_row("model.chat", MODEL_CHAT)
+    table.add_row("model.reasoner", MODEL_REASONER)
+    table.add_row("", "")  # separator
+
+    # Phase configs
+    for phase in ["discovery", "targeting", "validation"]:
+        pc = PHASE_CONFIGS.get(phase, {})
+        phase_name = PHASE_NAMES.get(phase, phase)
+        table.add_row(f"[bold]{phase}[/bold] ({phase_name})", "")
+        table.add_row(f"  {phase}.max_rounds", str(pc.get("max_rounds", "?")))
+        table.add_row(f"  {phase}.expert_count_min", str(pc.get("expert_count_min", "?")))
+        table.add_row(f"  {phase}.expert_count_max", str(pc.get("expert_count_max", "?")))
+        table.add_row(f"  {phase}.talent_role", str(pc.get("talent_role", "?")))
+
+    # Current mode
+    table.add_row("", "")
+    table.add_row("current_mode", ctx.mode)
+
+    ctx.console.print()
+    ctx.console.print(table)
+    ctx.console.print(
+        "\n[italic]使用 /config set <key> <value> 修改配置 "
+        "（下次分析生效）[/italic]\n"
+    )
+
+
+def _config_set(ctx: CommandContext, key: str, value: str):
+    """Modify a runtime configuration value."""
+    from vibe_engine.config import PHASE_CONFIGS
+
+    # Parse key: expect "phase.field" format
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        ctx.console.print(f"[red]无效的配置键：{key}[/red]")
+        ctx.console.print("格式：<phase>.<field>  例如：discovery.max_rounds")
+        return
+
+    phase, field_name = parts
+    if phase not in PHASE_CONFIGS:
+        ctx.console.print(f"[red]未知阶段：{phase}[/red]  可选：discovery, targeting, validation")
+        return
+
+    allowed_fields = {"max_rounds", "expert_count_min", "expert_count_max"}
+    if field_name not in allowed_fields:
+        ctx.console.print(f"[red]不可修改的字段：{field_name}[/red]")
+        ctx.console.print(f"可修改字段：{', '.join(sorted(allowed_fields))}")
+        return
+
+    try:
+        int_value = int(value)
+    except ValueError:
+        ctx.console.print(f"[red]值必须是整数：{value}[/red]")
+        return
+
+    # Validate ranges
+    if field_name == "max_rounds" and not (1 <= int_value <= 10):
+        ctx.console.print("[red]max_rounds 范围：1-10[/red]")
+        return
+    if field_name.startswith("expert_count") and not (1 <= int_value <= 10):
+        ctx.console.print("[red]expert_count 范围：1-10[/red]")
+        return
+
+    old_value = PHASE_CONFIGS[phase].get(field_name)
+    PHASE_CONFIGS[phase][field_name] = int_value
+    ctx.console.print(
+        f"[green]✓ {key}: {old_value} → {int_value}[/green]"
+        f"  （下次分析生效）"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry singleton
 # ---------------------------------------------------------------------------
 
@@ -339,16 +642,26 @@ _registry = CommandRegistry()
 
 def _register_builtins():
     """Register all built-in commands."""
+    # C2.2 Core commands
     _registry.register("help", cmd_help, "显示帮助信息", aliases=["h", "?"], usage="[命令名]")
     _registry.register("exit", cmd_exit, "退出 REPL", aliases=["quit", "q"])
     _registry.register("clear", cmd_clear, "清除屏幕", aliases=["cls"])
-    _registry.register("status", cmd_status, "查看分析状态")
+    _registry.register("stop", cmd_stop, "停止当前分析")
+    _registry.register("status", cmd_status, "查看最近一次分析的状态")
+
+    # C2.3 Analysis interaction commands
     _registry.register(
         "think", cmd_think, "查看专家/Talent 推理过程", usage="<编号|talent>"
     )
-    _registry.register("experts", cmd_experts, "列出所有专家维度")
+    _registry.register("experts", cmd_experts, "列出所有 10 个专家维度")
     _registry.register("summary", cmd_summary, "查看分析摘要（Talent + Planner）")
     _registry.register("mode", cmd_mode, "查看或切换分析模式", usage="[模式名]")
+
+    # C2.4 Export commands
+    _registry.register("export", cmd_export, "导出结果（md/json）", usage="<md|json>")
+
+    # C2.5 Config commands
+    _registry.register("config", cmd_config, "查看/修改运行时配置", usage="[show|set]")
 
 
 _register_builtins()
