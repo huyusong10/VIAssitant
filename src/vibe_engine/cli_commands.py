@@ -172,7 +172,7 @@ def cmd_status(ctx: CommandContext, args: list[str]):
         f"[bold]最后阶段：[/bold] {phase_name} · 第 {round_num} 轮\n"
         f"[bold]专家数据：[/bold] {expert_count} 条\n"
         f"[bold]模式：[/bold] {ctx.mode}",
-        title="[bold]分析状态[/bold]", border_style="blue",
+        title="[bold cyan]分析状态[/bold cyan]", border_style="cyan",
     ))
 
 
@@ -222,7 +222,7 @@ def cmd_think(ctx: CommandContext, args: list[str]):
             think = ts.get("think_content", "")
             if think:
                 ctx.console.print(Panel(
-                    think, border_style="magenta",
+                    think, border_style="cyan",
                     title="[dim]reasoning trace[/dim]",
                 ))
             else:
@@ -282,9 +282,9 @@ def cmd_summary(ctx: CommandContext, args: list[str]):
             f"[bold]核心矛盾点：[/bold]\n{ts.get('core_contradictions', '（无）')}\n\n"
             f"[bold]涌现假设：[/bold]\n{ts.get('emergent_hypothesis', '（无）')}\n\n"
             f"[bold]综合评分：[/bold] {score}/10",
-            title=f"[bold yellow]Talent · {phase_name} "
-                  f"第 {ts.get('round_num', '?')} 轮[/bold yellow]",
-            border_style="yellow",
+            title=f"[bold cyan]Talent · {phase_name} "
+                  f"第 {ts.get('round_num', '?')} 轮[/bold cyan]",
+            border_style="cyan",
         ))
 
     for dec in state.get("planner_decisions", []):
@@ -298,7 +298,7 @@ def cmd_summary(ctx: CommandContext, args: list[str]):
             f"[bold]决策：[/bold] {action_display}\n"
             f"[bold]充分度评分：[/bold] {dec.get('sufficiency_score', '?')}/10\n"
             f"[bold]理由：[/bold] {dec.get('reasoning', '')}",
-            title="[bold blue]Planner 裁决[/bold blue]", border_style="blue",
+            title="[bold cyan]Planner 裁决[/bold cyan]", border_style="cyan",
         ))
 
     expert_results = state.get("expert_results", [])

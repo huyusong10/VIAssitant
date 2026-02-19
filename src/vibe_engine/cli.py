@@ -14,6 +14,8 @@ Architecture (C1 refactored):
 """
 
 import argparse
+import os
+import readline  # noqa: F401 — enables arrow keys & history in input()
 import sys
 import time
 from typing import Any
@@ -120,7 +122,7 @@ class StreamProcessor:
             self.expert_results.append(r)
             ename = self.expert_map.get(eid, "?")
             self.history.append(
-                Text(f"✓ Expert {eid} ({ename}) finished analysis", style="dim green")
+                Text(f"  ✓ Expert {eid} ({ename}) finished", style="green")
             )
 
     def _handle_talent(self, updates: dict):
@@ -135,20 +137,20 @@ class StreamProcessor:
         phase_name = PHASE_NAMES.get(self.phase, self.phase)
         status_text = Text()
         status_text.append(
-            f"Phase: {phase_name} | Round: {self.round_num}\n", style="bold magenta"
+            f"Phase: {phase_name} | Round: {self.round_num}\n", style="bold cyan"
         )
         if self.pending_experts:
-            status_text.append("\nThinking Experts:\n", style="bold yellow")
+            status_text.append("\nThinking Experts:\n", style="bold")
             for eid in sorted(self.pending_experts):
                 ename = self.expert_map.get(eid, "?")
-                status_text.append(f" • [{eid}] {ename}...\n", style="yellow")
+                status_text.append(f"  ⏳ [{eid}] {ename}...\n", style="dim")
         else:
             status_text.append(f"\n{self.current_action}\n", style="cyan")
 
         return Panel(
             Align.left(status_text),
-            title="[bold green]System Status[/bold green]",
-            border_style="green",
+            title="[bold cyan]⚡ System Status[/bold cyan]",
+            border_style="cyan",
             padding=(0, 1),
         )
 
@@ -161,8 +163,8 @@ class StreamProcessor:
             f"[bold]核心矛盾点：[/bold]\n{summary.get('core_contradictions', '（无）')}\n\n"
             f"[bold]涌现假设：[/bold]\n{summary.get('emergent_hypothesis', '（无）')}\n\n"
             f"[bold]综合评分：[/bold] {score}/10",
-            title=f"[bold yellow]Talent 收敛 · {phase_name} 第 {round_num} 轮[/bold yellow]",
-            border_style="yellow",
+            title=f"[bold cyan]Talent 收敛 · {phase_name} 第 {round_num} 轮[/bold cyan]",
+            border_style="cyan",
         )
 
     def _render_planner_decision(self, decision: dict):
@@ -184,8 +186,8 @@ class StreamProcessor:
             content += f"\n\n[bold]Vibe 变异：[/bold]\n{vibe_next}"
         return Panel(
             content,
-            title="[bold blue]Planner 裁决[/bold blue]",
-            border_style="blue",
+            title="[bold cyan]Planner 裁决[/bold cyan]",
+            border_style="cyan",
         )
 
 
@@ -245,8 +247,8 @@ def run_analysis(vibe: str, mode: str, target_console: Console | None = None) ->
         ) as live:
             con.print(
                 Rule(
-                    f"[bold magenta]工作流启动：{PHASE_NAMES.get(start_phase, start_phase)}"
-                    f"[/bold magenta]"
+                    f"[bold cyan]工作流启动：{PHASE_NAMES.get(start_phase, start_phase)}"
+                    f"[/bold cyan]"
                 )
             )
             for chunk in graph.stream(initial_state, stream_mode="updates"):
@@ -295,6 +297,12 @@ class VibeREPL:
     - Ctrl+D or /exit to quit
     """
 
+    # ANSI-colored prompt with readline width markers.
+    # \001(\x01) and \002(\x02) tell readline the enclosed bytes are
+    # zero-width, so cursor positioning stays correct for CJK chars.
+    _PROMPT = "\x01\033[1;36m\x02vibe>\x01\033[0m\x02 "
+    _HISTFILE = os.path.expanduser("~/.config/vibe/input_history")
+
     def __init__(self, mode: str = "full", target_console: Console | None = None):
         self.console = target_console or console
         self.mode = mode
@@ -303,6 +311,23 @@ class VibeREPL:
         self._should_exit = False
 
         self._commands = get_registry()
+        self._setup_readline()
+
+    def _setup_readline(self):
+        """Load readline history for arrow-key recall."""
+        os.makedirs(os.path.dirname(self._HISTFILE), exist_ok=True)
+        try:
+            readline.read_history_file(self._HISTFILE)
+        except (FileNotFoundError, OSError):
+            pass
+        readline.set_history_length(200)
+
+    def _save_history(self):
+        """Persist readline history to disk."""
+        try:
+            readline.write_history_file(self._HISTFILE)
+        except OSError:
+            pass
 
     def run(self):
         """Main REPL loop."""
@@ -310,17 +335,11 @@ class VibeREPL:
 
         while not self._should_exit:
             try:
-                # Print styled prompt separately from input() to avoid
-                # readline miscalculating cursor positions for CJK chars.
-                # Rich markup in console.input() prompt produces ANSI escapes
-                # that confuse readline's width tracking.
-                self.console.print("[bold cyan]vibe>[/bold cyan]", end=" ")
-                sys.stdout.flush()
-                raw = input().strip()
+                raw = input(self._PROMPT).strip()
             except EOFError:
                 break
             except KeyboardInterrupt:
-                self.console.print()
+                print()  # newline after ^C
                 continue
 
             if not raw:
@@ -331,6 +350,7 @@ class VibeREPL:
             else:
                 self._handle_vibe(raw)
 
+        self._save_history()
         self.console.print("\n[dim]再见！👋[/dim]\n")
 
     def _dispatch_command(self, raw: str):

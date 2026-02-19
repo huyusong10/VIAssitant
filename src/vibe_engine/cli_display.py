@@ -104,7 +104,7 @@ def display_expert_result(console: Console, result: dict, show_think: bool = Fal
         console.print(
             Panel(
                 result["think_content"],
-                border_style="magenta",
+                border_style="cyan",
                 title="[dim]reasoning trace[/dim]",
             )
         )
@@ -151,7 +151,7 @@ def display_final_results(console: Console, state: dict, interactive_think: bool
         )
 
     if final_report:
-        console.print(Rule("[bold green]最终投资分析报告[/bold green]"))
+        console.print(Rule("[bold cyan]最终投资分析报告[/bold cyan]"))
         console.print(Markdown(final_report))
 
     if expert_results:
