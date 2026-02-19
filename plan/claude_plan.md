@@ -96,12 +96,12 @@
 
 **目标**：实现专家意见的交叉比对与涌现机制。
 
-- [ ] **S3.1** 实现 Talent 节点函数，接收全部 `expert_results`，调用 DeepSeek Reasoner
+- [x] **S3.1** 实现 Talent 节点函数，接收全部 `expert_results`，调用 DeepSeek Reasoner
   - 输出：`核心矛盾点` / `涌现假设` / `综合评分`
   - 验证：传入 mock 的 3 条专家意见，输出包含必须字段且逻辑上引用了多个专家观点
-- [ ] **S3.2** 将图拓展为：`START → fan_out(experts) → fan_in → talent → END`
+- [x] **S3.2** 将图拓展为：`START → fan_out(experts) → fan_in → talent → END`
   - 验证：完整 invoke 后，State 同时包含 `expert_results` 和 `talent_summary`
-- [ ] **S3.3** Talent 的角色 Prompt 支持根据工作流阶段动态切换（战略家/选股手/量化审计）
+- [x] **S3.3** Talent 的角色 Prompt 支持根据工作流阶段动态切换（战略家/选股手/量化审计）
   - 验证：分别传入 `phase="discovery"` / `"targeting"` / `"validation"`，Talent 输出的分析侧重点明显不同（人工判读）
 
 **完成标志**：专家→Talent 的发散-收敛单轮闭环跑通。

@@ -37,6 +37,7 @@ class TalentSummary(TypedDict):
     synthesis_score: int      # 综合评分 (0-10)
     phase: str                # 产生该总结时的工作流阶段
     round_num: int            # 产生该总结时的轮数
+    think_content: str        # 完整思考过程 (reasoning chain)
 
 
 class PlannerDecision(TypedDict):
@@ -74,7 +75,7 @@ class VibeState(TypedDict):
     # ^ Annotated with a custom reducer so fan-in parallel writes append correctly
 
     # --- Talent & Planner Outputs ---
-    talent_summaries: list[TalentSummary]
+    talent_summaries: Annotated[list[TalentSummary], lambda a, b: a + b]
     planner_decisions: list[PlannerDecision]
     current_talent_summary: TalentSummary | None
     current_planner_decision: PlannerDecision | None
