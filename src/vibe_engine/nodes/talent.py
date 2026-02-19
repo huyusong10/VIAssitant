@@ -101,12 +101,8 @@ def talent_node(state: VibeState) -> dict:
     phase = state.get("phase", "discovery")
     round_num = state.get("round", 1)
 
-    # Filter expert_results to only the current round's results
-    all_results = state.get("expert_results", [])
-    expert_results = [
-        r for r in all_results
-        if r.get("phase") == phase and r.get("round_num") == round_num
-    ]
+    # Read current round's expert results directly (populated by fan-in from experts)
+    expert_results = state.get("current_round_results", [])
 
     # Determine Talent role from phase configuration
     phase_config = PHASE_CONFIGS.get(phase, PHASE_CONFIGS["discovery"])

@@ -61,12 +61,6 @@ def parse_args(argv=None):
         default=None,
         help="Investment thesis / vibe to analyze (skips interactive prompt)",
     )
-    parser.add_argument(
-        "--expert",
-        type=int,
-        default=None,
-        help="(Deprecated) Planner now selects experts automatically.",
-    )
     return parser.parse_args(argv)
 
 
@@ -237,6 +231,7 @@ def run_cli(argv=None):
         "round": 1,
         "phase_round": {"discovery": 0, "targeting": 0, "validation": 0},
         "expert_results": [],
+        "current_round_results": [],
         "talent_summaries": [],
         "planner_decisions": [],
         "current_talent_summary": None,
@@ -255,11 +250,6 @@ def run_cli(argv=None):
         from vibe_engine.graph import build_graph
 
         graph = build_graph()
-
-        # Track state for display purposes
-        last_phase = start_phase
-        last_round = 1
-        expert_batch = []  # accumulate expert results for current round
 
         console.print(
             Rule(f"[bold magenta]阶段：{PHASE_NAMES.get(start_phase, start_phase)}[/bold magenta]")
@@ -303,13 +293,19 @@ def _display_final_results(state: dict, expert_dims: dict) -> None:
         # Show expert results for this phase/round
         round_experts = [
             r for r in expert_results
-            # We can't perfectly match — just show all available
+            if r.get("phase") == phase and r.get("round_num") == round_num
         ]
+        if round_experts:
+            for r in round_experts:
+                _display_expert_result(r)
 
         _display_talent_summary(ts)
 
-        if i < len(planner_decisions):
-            _display_planner_decision(planner_decisions[i], phase, round_num)
+        # Planner decisions list includes the initial planning decision too,
+        # so align by offset: talent #i corresponds to planner decision #(i+1)
+        planner_idx = i + 1  # skip the initial planning decision
+        if planner_idx < len(planner_decisions):
+            _display_planner_decision(planner_decisions[planner_idx], phase, round_num)
 
     # Vibe evolution
     if len(vibe_history) > 1:
@@ -338,13 +334,17 @@ def _display_final_results(state: dict, expert_dims: dict) -> None:
         console.print(Rule("[bold]专家分析摘要[/bold]"))
         table = Table(show_header=True, header_style="bold cyan")
         table.add_column("专家", style="cyan", max_width=20)
-        table.add_column("结论摘要", style="white", max_width=60)
+        table.add_column("阶段/轮次", style="dim", max_width=15)
+        table.add_column("结论摘要", style="white", max_width=50)
         table.add_column("Think", style="dim", justify="right")
         for r in expert_results:
+            phase_label = PHASE_NAMES.get(r.get('phase', ''), r.get('phase', '?'))
+            round_label = f"R{r.get('round_num', '?')}"
             conclusion_preview = (r.get("conclusion") or "")[:80]
             think_len = len(r.get("think_content") or "")
             table.add_row(
                 f"{r['expert_id']}·{r.get('expert_name', '?')}",
+                f"{phase_label} {round_label}",
                 conclusion_preview,
                 f"{think_len} chars",
             )

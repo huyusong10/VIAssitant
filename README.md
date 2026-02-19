@@ -11,7 +11,7 @@
 - **10 维专家集群**：宏观冲浪者、技术布道者、成长股狂热者、资金博弈操盘手、深度价值卫道士、黑天鹅预言家、合规审查官、商业模式解构师、行为金融学家、第二层思维者
 - **并发扇出/扇入**：通过 LangGraph `Send()` 机制实现 N 个专家并发分析，结果自动汇聚
 - **Talent 收敛**：专家意见交叉比对，涌现新假设，按阶段动态切换角色（战略家/选股手/量化审计）
-- **Planner 控制阀**：信息充分度评估 + Vibe 变异循环 + 轮数限制 + 专家动态选取
+- **Planner 控制阀**：作为每轮循环的**入口节点**，负责首轮智能选专家、充分度评估、Vibe 变异循环、阶段流转控制
 - **三阶段工作流**：价值发现 → 标的锁定 → 逻辑验证，每阶段内部可迭代循环
 - **最终报告生成**：三阶段分析完成后自动生成结构化投资建议报告
 - **模式切换**：支持单阶段运行、组合模式（1+2、1+2+3）或完整流程
@@ -60,9 +60,6 @@ uv run python main.py
 # 直接传入 Vibe（完整流程）
 uv run python main.py --vibe "看好脑机接口，Neural-Link 宣称突破双向读写"
 
-# 指定初始专家数量
-uv run python main.py --vibe "看好新能源汽车" --expert 4
-
 # 仅运行价值发现阶段
 uv run python main.py --vibe "看好固态电池" --mode discovery
 
@@ -103,56 +100,77 @@ uv run python main.py --help
 
 ## 架构设计
 
+### Planner-first 拓扑（Phase A 重构后）
+
 ```
                     ┌──────────┐
                     │  START   │
                     └────┬─────┘
                          │
                     ┌────┴─────┐
-                    │ fan_out  │◄────────────────────┐
-                    └────┬─────┘                     │
-                         │                           │
-                    route_to_experts()               │
-                    (Send() fan-out)                  │
-                         │                           │
-              ┌──────────┼──────────┐                │
-              ▼          ▼          ▼                │
-        ┌──────────┐ ┌──────────┐ ┌──────────┐      │
-        │ Expert 1 │ │ Expert N │ │ Expert M │      │  iterate
-        └────┬─────┘ └────┬─────┘ └────┬─────┘      │  (Vibe 变异)
-              │          │          │                │
-              └──────────┼──────────┘                │
-                    (fan-in reducer)                  │
-                         │                           │
-                    ┌────┴─────┐                     │
-                    │  Talent  │  收敛 + 涌现          │
-                    └────┬─────┘                     │
-                         │                           │
-                    ┌────┴─────┐                     │
-                    │ Planner  │  充分度评估            │
-                    └────┬─────┘                     │
-                         │                           │
-            ┌────────────┼────────────┐              │
-            ▼            ▼            ▼              │
-        [abort]      [proceed]    [iterate]──────────┘
-            │            │
-            ▼            ▼
-           END     has next phase?
-                     │         │
-                     ▼         ▼
-                  fan_out    reporter → END
-                (next phase)  (最终报告)
+                    │ Planner  │◄───────────────────────┐
+                    └────┬─────┘                        │
+                         │                              │
+              route_after_planner()                     │
+                         │                              │
+            ┌────────────┼────────────┐                 │
+            ▼            ▼            ▼                 │
+       [dispatch]    [report]      [abort]              │
+            │            │            │                 │
+            ▼            ▼            ▼                 │
+       ┌─────────┐  ┌──────────┐    END                │
+       │ fan_out │  │ Reporter │                       │
+       └────┬────┘  └────┬─────┘                       │
+            │            ▼                              │
+       route_to_experts()                               │
+       (Send() fan-out)                                 │
+            │            END                            │
+  ┌─────────┼──────────┐                                │
+  ▼         ▼          ▼                                │
+┌────────┐┌────────┐┌────────┐                          │
+│Expert 1││Expert N││Expert M│                          │
+└───┬────┘└───┬────┘└───┬────┘                          │
+    │         │         │                               │
+    └─────────┼─────────┘                               │
+         (fan-in reducer)                               │
+              │                                         │
+         ┌────┴─────┐                                   │
+         │  Talent  │  收敛 + 涌现                       │
+         └────┬─────┘                                   │
+              │                                         │
+              └─────────────────────────────────────────┘
+                     (返回 Planner 评估)
 ```
+
+**关键设计：Planner 是每轮循环的起点**，而非末尾。这确保了：
+- 首轮由 Planner 基于 Vibe 智能选取专家（而非盲选）
+- 每次 iterate 都由 Planner 驱动 Vibe 变异后重新选专家
+- 阶段转换时由 Planner 为新阶段选取合适专家
 
 ### 数据流
 
 ```
-User Vibe → Planner → fan-out Expert_Swarm (N 并发)
-         → fan-in → Talent (收敛)
-         → Planner (循环/推进/终止)
-         → ... (阶段内迭代)
-         → Reporter (最终报告) → END
+Planner (首轮: 基于 Vibe 选专家)
+  → fan_out → Expert_Swarm (N 并发)
+    → fan-in → Talent (收敛)
+      → Planner (评估充分度)
+        ├── iterate → 变异 Vibe, 选新专家 → dispatch (同阶段)
+        ├── proceed + 下一阶段 → 切换阶段 → dispatch
+        ├── proceed + 最后阶段 → Reporter (最终报告) → END
+        └── abort → END
 ```
+
+### 双轨 expert_results 机制
+
+| 字段 | Reducer | 用途 | 消费者 |
+|------|---------|------|--------|
+| `expert_results` | append (永不清空) | 全量历史归档 | Reporter |
+| `current_round_results` | reset-or-append | 当轮专家结果 | Talent |
+
+- `fan_out_node` 在每次 dispatch 时将 `current_round_results` 重置为 `[]`
+- Expert 节点同时写入两个字段
+- Talent 仅读取 `current_round_results`（无需按 phase/round 过滤）
+- Reporter 读取完整的 `expert_results`（跨所有轮次和阶段）
 
 ### 项目结构
 
@@ -166,14 +184,14 @@ VIAssitant/
 │       ├── __init__.py
 │       ├── config.py          # 配置常量（专家维度、阶段参数、模型选择）
 │       ├── state.py           # 全局状态定义（VibeState、ExpertInput 等）
-│       ├── graph.py           # LangGraph FSM 构建（三阶段 + 循环）
+│       ├── graph.py           # LangGraph FSM 构建（Planner-first 拓扑）
 │       ├── llm.py             # LLM 客户端工厂（Chat / Reasoner）
 │       ├── cli.py             # CLI 交互入口
 │       ├── nodes/
-│       │   ├── expert.py      # 专家节点（工厂模式 + Send() 扇出）
-│       │   ├── talent.py      # 天才收敛节点（阶段角色切换）
-│       │   ├── planner.py     # 规划器控制阀（充分度评估 + Vibe 变异）
-│       │   └── reporter.py    # 最终报告生成
+│       │   ├── expert.py      # 专家节点（Send() 扇出，双写 expert_results + current_round_results）
+│       │   ├── talent.py      # 天才收敛节点（从 current_round_results 读取，阶段角色切换）
+│       │   ├── planner.py     # 规划器控制阀（首轮选专家 + 充分度评估 + Vibe 变异 + 阶段流转）
+│       │   └── reporter.py    # 最终报告生成（从 expert_results 全量历史读取）
 │       └── prompts/
 │           ├── __init__.py    # Prompt 模板管理（含 Talent/Planner/Report 模板）
 │           ├── expert_system.md
@@ -194,6 +212,7 @@ VIAssitant/
 | S3 | Done | Talent 收敛节点 | 专家意见交叉比对 + 涌现 |
 | S4 | Done | Planner 控制阀 | 充分度评估 + Vibe 变异循环 |
 | S5 | Done | 三阶段工作流串联 | 价值发现→标的锁定→逻辑验证 + 最终报告 |
+| GAP | Done | 架构更正 (Phase A-D) | Planner-first 拓扑 + expert_results 双轨 + State 字段调整 |
 | S6 | Planned | CLI 交互体验 | 实时状态展示 + 人工打断 |
 | S7 | Planned | 模式切换与配置 | 配置文件覆盖 |
 | S8 | Planned | 端到端验收 | 完整流程跑通 + 输出报告 |
@@ -201,10 +220,12 @@ VIAssitant/
 ## 架构约束
 
 1. **前后端分离**：`graph.py` 和 `nodes/` 不 import `cli.py`
-2. **可扩展性**：Expert 节点使用工厂模式，未来可升级为子工作流
-3. **模型分级**：Planner 使用 Chat 模型（快速），Expert/Talent 使用 Reasoner 模型（深思）
-4. **无持久化**：Phase 1 不引入数据库，所有状态仅存在于内存
-5. **单轮对话**：不考虑多轮历史，但 State 设计预留 `session_id` 字段
+2. **Planner-first**：Planner 是每轮循环的入口节点，负责首轮专家选取和后续轮的充分度评估
+3. **可扩展性**：Expert 节点使用工厂模式，未来可升级为子工作流
+4. **模型分级**：Planner 使用 Chat 模型（快速），Expert/Talent 使用 Reasoner 模型（深思）
+5. **无持久化**：Phase 1 不引入数据库，所有状态仅存在于内存
+6. **单轮对话**：不考虑多轮历史，但 State 设计预留 `session_id` 字段
+7. **expert_results 不可清空**：使用 append-only reducer，确保 Reporter 可回溯所有历史分析
 
 ## 许可
 

@@ -197,9 +197,13 @@ def expert_node(state: ExpertInput) -> dict:
 
     result = _call_expert(expert_id, vibe, phase, round_num)
 
-    # Append to expert_results (full historical archive).
-    # Talent filters by phase/round_num to get current round results.
-    return {"expert_results": [result]}
+    # Append to both:
+    # - expert_results: full historical archive (Reporter reads this)
+    # - current_round_results: current round only (Talent reads this)
+    return {
+        "expert_results": [result],
+        "current_round_results": [result],
+    }
 
 
 def make_expert_node(expert_id: int):
@@ -223,7 +227,10 @@ def make_expert_node(expert_id: int):
         phase = state.get("phase", "discovery")
         round_num = state.get("round", 1)
         result = _call_expert(expert_id, vibe, phase, round_num)
-        return {"expert_results": [result]}
+        return {
+            "expert_results": [result],
+            "current_round_results": [result],
+        }
 
     _node.__name__ = f"expert_{expert_id}"
     _node.__qualname__ = f"expert_{expert_id}"

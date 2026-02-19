@@ -5,6 +5,17 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 
 
+def _round_results_reducer(existing: list, new: list) -> list:
+    """Custom reducer for current_round_results.
+
+    - If `new` is an empty list, RESET to empty (fan_out_node clears before dispatch).
+    - Otherwise, APPEND (fan-in merge from parallel expert nodes).
+    """
+    if len(new) == 0:
+        return []
+    return existing + new
+
+
 class ExpertInput(TypedDict):
     """Per-expert input dispatched via Send() during fan-out.
 
@@ -43,9 +54,19 @@ class TalentSummary(TypedDict):
 
 
 class PlannerDecision(TypedDict):
-    """Structured output from the Planner control node."""
+    """Structured output from the Planner control node.
+
+    Note: `decision` holds the LLM's raw semantic decision (proceed/iterate/abort).
+    The planner_node maps this to `routing_action` in VibeState for graph routing:
+      - First round (no Talent)   → routing_action = "dispatch"
+      - iterate                   → routing_action = "dispatch" (after Vibe mutation)
+      - proceed + next phase      → routing_action = "dispatch" (after phase transition)
+      - proceed + last phase      → routing_action = "report"
+      - abort                     → routing_action = "abort"
+    This keeps LLM prompts simple while centralizing routing logic.
+    """
     sufficiency_score: int    # 信息充分度评分 (0-10)
-    decision: str             # "proceed" | "iterate" | "abort"
+    decision: str             # LLM output: "proceed" | "iterate" | "abort"
     reasoning: str            # 决策依据
     vibe_next: str            # 变异后的 Vibe (仅 iterate 时生成)
     selected_experts: list[int]  # 下一轮选取的专家 ID 列表
@@ -57,7 +78,12 @@ class VibeState(TypedDict):
 
     Design notes:
     - `messages` uses LangGraph's add_messages reducer for append-only updates.
+    - `expert_results` uses append reducer for full historical archive.
+    - `current_round_results` uses custom reset-or-append reducer.
     - All other fields use last-write-wins semantics (default for TypedDict).
+    - `routing_action` is the graph-level routing signal set by planner_node,
+      mapped from the LLM's decision (see PlannerDecision docstring).
+    - `selected_experts` is populated solely by the Planner — not set externally.
     - `session_id` is reserved for future multi-session support (Phase 2+).
     - The CLI layer reads from this state but never writes back into the graph.
     """
@@ -75,7 +101,12 @@ class VibeState(TypedDict):
     # --- Expert Outputs ---
     expert_results: Annotated[list[ExpertResult], lambda a, b: a + b]
     # ^ Annotated with a custom reducer so fan-in parallel writes append correctly.
-    # Expert results include phase/round_num for filtering by Talent.
+    # Full historical archive — Reporter reads from this.
+    current_round_results: Annotated[list[ExpertResult], _round_results_reducer]
+    # ^ Current round results only. Also uses append reducer for fan-in merging
+    # during parallel expert execution. Reset (overwritten) at the start of each
+    # dispatch cycle by fan_out_node. Talent reads from this instead of filtering
+    # expert_results.
 
     # --- Talent & Planner Outputs ---
     talent_summaries: Annotated[list[TalentSummary], lambda a, b: a + b]
@@ -88,11 +119,11 @@ class VibeState(TypedDict):
 
     # --- Internal / Diagnostics ---
     messages: Annotated[list[Any], add_messages]  # Reserved for LangGraph compat
-    selected_experts: list[int]      # Expert IDs selected for the current round
+    selected_experts: list[int]      # Expert IDs for current round (set by Planner only)
     abort_reason: str | None         # Populated on abort decision
 
-    # --- Routing ---
-    routing_action: str | None       # Planner's routing signal: "dispatch" | "report" | "abort"
+    # --- Routing (set by planner_node, consumed by route_after_planner) ---
+    routing_action: str | None       # Graph routing signal: "dispatch" | "report" | "abort"
 
     # --- Mode Control ---
     target_phases: list[str]         # Phases to run (e.g. ["discovery","targeting","validation"])

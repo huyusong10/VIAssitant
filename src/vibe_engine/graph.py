@@ -23,6 +23,7 @@ Phase A correction — Planner-first topology:
   - Abort: → END
 """
 
+import logging
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from vibe_engine.state import VibeState, ExpertInput
@@ -30,6 +31,8 @@ from vibe_engine.nodes.expert import expert_node
 from vibe_engine.nodes.talent import talent_node
 from vibe_engine.nodes.planner import planner_node
 from vibe_engine.nodes.reporter import reporter_node
+
+logger = logging.getLogger(__name__)
 
 
 def route_to_experts(state: VibeState) -> list[Send]:
@@ -86,16 +89,27 @@ def route_after_planner(state: VibeState) -> str:
 
 
 def fan_out_node(state: VibeState) -> dict:
-    """Passthrough node that acts as the fan-out anchor.
+    """Fan-out anchor node — resets current round results and logs dispatch info.
 
-    LangGraph requires conditional edges to originate from a node name
-    (not directly from another conditional edge). This node serves as
-    the dispatch point for Send() to parallel expert nodes.
+    Responsibilities (post Phase B/C corrections):
+    1. Clear `current_round_results` so each dispatch cycle starts fresh.
+       The custom reducer on that field treats `[]` as a reset signal.
+    2. Log diagnostic info: which experts are being dispatched, for which
+       phase/round. This aids debugging multi-round workflows.
 
-    It does not modify state — the actual fan-out is driven by
-    `route_to_experts` via conditional edges from this node.
+    LangGraph requires conditional edges to originate from a named node,
+    so this node also serves as the structural anchor for Send()-based fan-out.
     """
-    return {}
+    phase = state.get("phase", "discovery")
+    round_num = state.get("round", 1)
+    selected = state.get("selected_experts", [])
+
+    logger.info(
+        "fan_out: dispatching experts %s for phase=%s round=%d",
+        selected, phase, round_num,
+    )
+
+    return {"current_round_results": []}
 
 
 def build_graph():
