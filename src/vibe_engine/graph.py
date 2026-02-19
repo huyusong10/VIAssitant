@@ -9,31 +9,67 @@ Assembly strategy (incremental across sprints):
 """
 
 from langgraph.graph import StateGraph, START, END
-from vibe_engine.state import VibeState
-from vibe_engine.nodes.expert import make_expert_node
+from langgraph.types import Send
+from vibe_engine.state import VibeState, ExpertInput
+from vibe_engine.nodes.expert import expert_node
 
 
-# Default expert to use for the S1 single-expert graph
-_DEFAULT_EXPERT_ID = 2  # 技术布道者 — good general-purpose dimension
+def route_to_experts(state: VibeState) -> list[Send]:
+    """Fan-out router: dispatch Send() to each selected expert.
+
+    Each Send() creates an independent sub-invocation of the expert_node
+    with its own ExpertInput (containing expert_id + shared vibe/phase/round).
+    LangGraph guarantees parallel execution and context isolation.
+
+    Returns:
+        A list of Send objects, one per selected expert.
+    """
+    selected = state.get("selected_experts", [2])  # default to expert 2
+    vibe = state.get("vibe", "")
+    phase = state.get("phase", "discovery")
+    round_num = state.get("round", 1)
+
+    sends = []
+    for expert_id in selected:
+        sends.append(
+            Send(
+                "expert",
+                {
+                    "expert_id": expert_id,
+                    "vibe": vibe,
+                    "phase": phase,
+                    "round": round_num,
+                },
+            )
+        )
+    return sends
 
 
-def build_graph(expert_id: int = _DEFAULT_EXPERT_ID):
+def build_graph():
     """Build and compile the Vibe Investment FSM.
 
-    S1 implementation: START → expert_node → END
+    S2 implementation: START → fan-out(experts) → fan-in → END
 
-    Args:
-        expert_id: Which expert dimension to use (1-10). Defaults to 2.
+    The fan-out is driven by `route_to_experts`, which reads
+    `selected_experts` from the state and dispatches one Send()
+    per expert. LangGraph handles parallel execution and
+    fan-in via the expert_results reducer (list append).
 
     Returns:
         A compiled LangGraph graph ready for .invoke() / .stream().
     """
     graph = StateGraph(VibeState)
 
-    expert_node = make_expert_node(expert_id)
+    # Expert node — receives ExpertInput via Send().
+    # The factory pattern is replaced by a single node function
+    # that reads expert_id from its input. LangGraph fan-out
+    # ensures each invocation is isolated.
     graph.add_node("expert", expert_node)
 
-    graph.add_edge(START, "expert")
+    # Fan-out: START → conditional edges → parallel expert nodes
+    graph.add_conditional_edges(START, route_to_experts)
+
+    # Fan-in: expert → END (all expert results auto-merge via reducer)
     graph.add_edge("expert", END)
 
     return graph.compile()

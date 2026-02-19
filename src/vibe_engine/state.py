@@ -5,6 +5,18 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 
 
+class ExpertInput(TypedDict):
+    """Per-expert input dispatched via Send() during fan-out.
+
+    Each expert receives its own ExpertInput with isolated context.
+    This ensures expert nodes do not share message history.
+    """
+    expert_id: int
+    vibe: str
+    phase: str
+    round: int
+
+
 class ExpertResult(TypedDict):
     """Structured output from a single expert node."""
     expert_id: int

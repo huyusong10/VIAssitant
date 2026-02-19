@@ -8,6 +8,7 @@ from rich.text import Text
 from rich.rule import Rule
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.columns import Columns
 
 console = Console()
 
@@ -39,17 +40,48 @@ def parse_args(argv=None):
         help="Investment thesis / vibe to analyze (skips interactive prompt)",
     )
     parser.add_argument(
-        "--expert",
-        type=int,
-        default=2,
-        choices=list(range(1, 11)),
+        "--experts",
+        type=str,
+        default=None,
         help=(
-            "Expert dimension to use in S1 single-expert mode (1-10, default: 2). "
-            "1=宏观冲浪者 2=技术布道者 3=成长股狂热者 4=资金博弈操盘手 5=深度价值卫道士 "
-            "6=黑天鹅预言家 7=合规审查官 8=商业模式解构师 9=行为金融学家 10=第二层思维者"
+            "Comma-separated expert IDs to dispatch (1-10). "
+            "E.g. --experts 1,2,6 dispatches 宏观冲浪者, 技术布道者, 黑天鹅预言家. "
+            "Defaults to 2,6,8 (3 experts) if not specified."
         ),
     )
     return parser.parse_args(argv)
+
+
+def _parse_expert_ids(raw: str | None) -> list[int]:
+    """Parse comma-separated expert IDs string into a list of ints."""
+    if not raw:
+        return [2, 6, 8]  # Default: 技术布道者, 黑天鹅预言家, 商业模式解构师
+
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            try:
+                eid = int(part)
+                if 1 <= eid <= 10:
+                    ids.append(eid)
+                else:
+                    console.print(f"[yellow]警告：忽略无效专家 ID {eid}（有效范围 1-10）[/yellow]")
+            except ValueError:
+                console.print(f"[yellow]警告：忽略无效输入 '{part}'[/yellow]")
+
+    if not ids:
+        console.print("[yellow]未提供有效专家 ID，使用默认专家组[/yellow]")
+        return [2, 6, 8]
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for eid in ids:
+        if eid not in seen:
+            seen.add(eid)
+            unique.append(eid)
+    return unique
 
 
 def _display_expert_result(result: dict, show_think: bool = False) -> None:
@@ -123,7 +155,7 @@ def run_cli(argv=None):
     console.print(Panel(Text(BANNER, style="bold cyan"), border_style="cyan"))
     console.print(
         "[bold green]Vibe Investment Engine[/bold green] — "
-        "[dim]S1 · 单专家直通车[/dim]\n"
+        "[dim]S2 · 专家集群扇出/扇入[/dim]\n"
     )
 
     vibe = args.vibe
@@ -134,8 +166,12 @@ def run_cli(argv=None):
         console.print("[red]未提供 Vibe。退出。[/red]")
         return
 
+    # Parse expert selection
+    selected_experts = _parse_expert_ids(args.experts)
+
     console.print(f"\n[bold]模式：[/bold] {args.mode}")
-    console.print(f"[bold]Vibe：[/bold] {vibe}\n")
+    console.print(f"[bold]Vibe：[/bold] {vibe}")
+    console.print(f"[bold]专家数量：[/bold] {len(selected_experts)}\n")
 
     # Build initial state
     from vibe_engine.config import EXPERT_DIMENSIONS
@@ -153,21 +189,30 @@ def run_cli(argv=None):
         "current_planner_decision": None,
         "final_report": None,
         "messages": [],
-        "selected_experts": [args.expert],
+        "selected_experts": selected_experts,
         "abort_reason": None,
         "session_id": None,
     }
 
-    # Show which expert is working
-    expert_dim = next(
-        (d for d in EXPERT_DIMENSIONS if d["id"] == args.expert),
-        {"name": "Unknown", "description": ""},
-    )
+    # Show which experts are working
+    expert_dims = {d["id"]: d for d in EXPERT_DIMENSIONS}
+    expert_panels = []
+    for eid in selected_experts:
+        dim = expert_dims.get(eid, {"name": "Unknown", "description": ""})
+        expert_panels.append(
+            Panel(
+                f"[bold]{dim['name']}[/bold]\n[dim]{dim['description']}[/dim]",
+                title=f"[cyan]专家 {eid}[/cyan]",
+                border_style="cyan",
+                width=40,
+            )
+        )
+
     console.print(
         Panel(
-            f"[bold]{expert_dim['name']}[/bold]\n[dim]{expert_dim['description']}[/dim]",
-            title=f"[cyan]专家 {args.expert} 正在分析中...[/cyan]",
-            border_style="cyan",
+            Columns(expert_panels, equal=True, expand=True),
+            title=f"[bold cyan]{len(selected_experts)} 位专家正在并发分析中...[/bold cyan]",
+            border_style="bright_cyan",
         )
     )
 
@@ -175,11 +220,14 @@ def run_cli(argv=None):
     try:
         from vibe_engine.graph import build_graph
 
+        expert_names = [expert_dims[eid]["name"] for eid in selected_experts]
+        status_msg = ", ".join(expert_names)
+
         with console.status(
-            f"[cyan]专家 [{expert_dim['name']}] 正在深度思考...[/cyan]",
+            f"[cyan]专家集群 [{status_msg}] 正在深度思考...[/cyan]",
             spinner="dots",
         ):
-            graph = build_graph(expert_id=args.expert)
+            graph = build_graph()
             final_state = graph.invoke(initial_state)
 
     except KeyboardInterrupt:
@@ -190,9 +238,9 @@ def run_cli(argv=None):
         raise
 
     # Display results
-    console.print(f"\n[bold green]✓ 分析完成[/bold green]\n")
-
     results = final_state.get("expert_results", [])
+    console.print(f"\n[bold green]✓ {len(results)} 位专家分析完成[/bold green]\n")
+
     for result in results:
         _display_expert_result(result, show_think=False)
 
@@ -212,6 +260,34 @@ def run_cli(argv=None):
             f"{think_len} chars",
         )
     console.print(table)
+
+    # Isolation check summary
+    console.print(f"\n")
+    console.print(Rule("[bold]并发隔离性验证[/bold]"))
+    if len(results) == len(selected_experts):
+        console.print(
+            f"  [green]✓[/green] 扇出数量 = {len(selected_experts)}，"
+            f"回收数量 = {len(results)}，匹配成功"
+        )
+    else:
+        console.print(
+            f"  [red]✗[/red] 扇出数量 = {len(selected_experts)}，"
+            f"回收数量 = {len(results)}，不匹配"
+        )
+
+    returned_ids = {r["expert_id"] for r in results}
+    expected_ids = set(selected_experts)
+    if returned_ids == expected_ids:
+        console.print(f"  [green]✓[/green] 返回的专家 ID 集合与预期一致：{sorted(returned_ids)}")
+    else:
+        console.print(f"  [red]✗[/red] 专家 ID 不匹配。预期 {sorted(expected_ids)}，实际 {sorted(returned_ids)}")
+
+    # Check uniqueness of expert analyses (basic isolation test)
+    contents = [r.get("logic_chain", "") for r in results]
+    if len(set(contents)) == len(contents):
+        console.print(f"  [green]✓[/green] 各专家逻辑链条内容互不相同，上下文隔离正常")
+    else:
+        console.print(f"  [yellow]⚠[/yellow] 存在相同的逻辑链条内容，请人工检查隔离性")
 
     # Interactive think viewer
     if results:
