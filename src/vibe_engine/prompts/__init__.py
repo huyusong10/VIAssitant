@@ -155,6 +155,41 @@ def get_talent_user_prompt(expert_results: list, phase: str, round_num: int) -> 
 # Planner prompts  (S4)
 # ---------------------------------------------------------------------------
 
+PLANNER_INITIAL_SYSTEM_PROMPT = """\
+你是投资分析工作流的规划器（Planner），负责工作流的首轮规划。
+
+## 你的职责
+当前是一个新阶段的首轮，还没有专家分析结果。你需要：
+1. 分析用户给出的投资直觉（Vibe），理解其核心关注点
+2. 从专家列表中选取最合适的一批专家进行首轮发散分析
+3. 说明你的选取理由
+
+## 当前阶段：{phase}
+
+## 可选专家列表
+{expert_roster}
+
+## 输出格式（严格 JSON，不要添加其他内容）
+```json
+{{
+  "reasoning": "<选取专家的理由和分析策略>",
+  "selected_experts": [<专家ID列表，1-10之间的整数>]
+}}
+```
+
+使用中文输出（JSON 字段值部分）。
+"""
+
+PLANNER_INITIAL_USER_TEMPLATE = """\
+## 用户投资直觉（Vibe）
+{vibe}
+
+## 当前阶段
+{phase}
+
+请分析这个 Vibe，选取最合适的首轮专家组合。
+"""
+
 PLANNER_SYSTEM_PROMPT = """\
 你是投资分析工作流的规划器（Planner），负责评估信息充分度并控制工作流的流转。
 
@@ -229,6 +264,19 @@ def _build_expert_roster() -> str:
     for d in EXPERT_DIMENSIONS:
         lines.append(f"  {d['id']}. {d['name']}：{d['description']}")
     return "\n".join(lines)
+
+
+def get_planner_initial_system_prompt(phase: str) -> str:
+    """Return the system prompt for the Planner's initial round (no Talent input)."""
+    return PLANNER_INITIAL_SYSTEM_PROMPT.format(
+        phase=phase,
+        expert_roster=_build_expert_roster(),
+    )
+
+
+def get_planner_initial_user_prompt(vibe: str, phase: str) -> str:
+    """Return the user prompt for the Planner's initial round."""
+    return PLANNER_INITIAL_USER_TEMPLATE.format(vibe=vibe, phase=phase)
 
 
 def get_planner_system_prompt(phase: str, round_num: int, max_rounds: int) -> str:

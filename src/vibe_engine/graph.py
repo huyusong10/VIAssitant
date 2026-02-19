@@ -7,31 +7,20 @@ Assembly strategy (incremental across sprints):
   S4 — + planner node + conditional edges (control loop)
   S5 — three-phase pipeline               (full workflow)
 
-S5 graph topology:
+Phase A correction — Planner-first topology:
 
-  START → fan_out → expert(s)  [fan-out via Send()]
-                        │
-                        ▼
-                      talent    [convergence]
-                        │
-                        ▼
-                     planner    [control valve]
-                        │
-            ┌───────────┼───────────┐
-            ▼           ▼           ▼
-        [iterate]   [proceed]    [abort]
-            │           │           │
-            ▼           │           ▼
-         fan_out        │          END
-         (loop)         │
-                        ▼
-              ┌─────────┴─────────┐
-              │                   │
-         has next phase?     last phase?
-              │                   │
-              ▼                   ▼
-           fan_out             reporter → END
-           (next phase)
+  START → planner → conditional_edges
+                      ├── "dispatch" → fan_out → expert(s) → talent → planner (loop)
+                      ├── "report"  → reporter → END
+                      └── "abort"   → END
+
+  The Planner is the ENTRY POINT of each cycle:
+  - First round: Planner receives Vibe, selects experts → dispatch
+  - After Talent: Planner evaluates sufficiency → iterate/proceed/abort
+  - Iterate: Planner mutates Vibe, selects experts → dispatch (same phase)
+  - Proceed + next phase: Planner transitions phase → dispatch (new phase)
+  - Proceed + last phase: → reporter → END
+  - Abort: → END
 """
 
 from langgraph.graph import StateGraph, START, END
@@ -41,7 +30,6 @@ from vibe_engine.nodes.expert import expert_node
 from vibe_engine.nodes.talent import talent_node
 from vibe_engine.nodes.planner import planner_node
 from vibe_engine.nodes.reporter import reporter_node
-from vibe_engine.config import PHASE_ORDER
 
 
 def route_to_experts(state: VibeState) -> list[Send]:
@@ -76,47 +64,24 @@ def route_to_experts(state: VibeState) -> list[Send]:
 
 
 def route_after_planner(state: VibeState) -> str:
-    """Conditional router after Planner decision (S5).
+    """Conditional router after Planner decision.
 
-    Routes based on the Planner's decision:
-    - "iterate" → back to fan_out for another round in the same phase
-    - "proceed" → either fan_out (next phase) or reporter (last phase done)
-    - "abort"   → END with abort_reason populated
-
-    The phase transition itself is handled by the Planner node's state update.
-    By the time we route, state["phase"] already reflects the new phase
-    (if proceed was to a next phase) or remains at the last phase (if no
-    next phase exists, meaning workflow is complete).
+    Routes based on the Planner's routing_action:
+    - "dispatch" → fan_out (send experts for analysis)
+    - "report"   → reporter (generate final report)
+    - "abort"    → END
 
     Returns:
         The name of the next node to transition to.
     """
-    decision = state.get("current_planner_decision")
-    if decision is None:
-        return END
+    action = state.get("routing_action", "abort")
 
-    action = decision.get("decision", "abort")
-
-    if action == "iterate":
+    if action == "dispatch":
         return "fan_out"
-
-    elif action == "proceed":
-        # Check if we've transitioned to a new phase or completed the workflow.
-        # The planner_node already updated state["phase"] to the next phase
-        # if one exists within target_phases. If no next phase, it didn't change
-        # the phase, meaning we should generate the final report.
-        current_phase = state.get("phase", "discovery")
-        target_phases = state.get("target_phases", PHASE_ORDER)
-
-        # If the current phase is the last target phase, workflow is done
-        if current_phase == target_phases[-1]:
-            return "reporter"
-
-        # Otherwise, we've transitioned to a new phase — re-enter the loop
-        return "fan_out"
-
+    elif action == "report":
+        return "reporter"
     else:
-        # "abort" → END
+        # "abort" or unknown → END
         return END
 
 
@@ -125,7 +90,7 @@ def fan_out_node(state: VibeState) -> dict:
 
     LangGraph requires conditional edges to originate from a node name
     (not directly from another conditional edge). This node serves as
-    the re-entry point for both iterate loops and phase transitions.
+    the dispatch point for Send() to parallel expert nodes.
 
     It does not modify state — the actual fan-out is driven by
     `route_to_experts` via conditional edges from this node.
@@ -136,15 +101,14 @@ def fan_out_node(state: VibeState) -> dict:
 def build_graph():
     """Build and compile the Vibe Investment FSM.
 
-    S5 implementation — three-phase pipeline:
-      fan_out → expert(s) [fan-out via Send]
-                     → talent [convergence]
-                         → planner [control valve]
-                             → iterate  → fan_out (loop)
-                             → proceed  → fan_out (next phase) or reporter (done)
-                             → abort    → END
+    Phase A corrected topology — Planner-first:
+      START → planner → [dispatch]  → fan_out → expert(s) → talent → planner (loop)
+                       → [report]   → reporter → END
+                       → [abort]    → END
 
     Supports:
+    - Planner as the entry point and decision hub for each cycle
+    - First-round intelligent expert selection based on Vibe
     - Multi-round iteration within each phase (discovery, targeting, validation)
     - Phase transitions (discovery → targeting → validation)
     - Final report generation after all phases complete
@@ -156,15 +120,18 @@ def build_graph():
     graph = StateGraph(VibeState)
 
     # ── Nodes ──
+    graph.add_node("planner", planner_node)
     graph.add_node("fan_out", fan_out_node)
     graph.add_node("expert", expert_node)
     graph.add_node("talent", talent_node)
-    graph.add_node("planner", planner_node)
     graph.add_node("reporter", reporter_node)
 
     # ── Edges ──
-    # START → fan_out (entry point)
-    graph.add_edge(START, "fan_out")
+    # START → planner (Planner is the entry point)
+    graph.add_edge(START, "planner")
+
+    # planner → conditional routing (dispatch/report/abort)
+    graph.add_conditional_edges("planner", route_after_planner)
 
     # fan_out → conditional dispatch to parallel expert nodes
     graph.add_conditional_edges("fan_out", route_to_experts)
@@ -172,11 +139,8 @@ def build_graph():
     # expert → talent (fan-in: all expert results merge via reducer)
     graph.add_edge("expert", "talent")
 
-    # talent → planner
+    # talent → planner (back to Planner for evaluation)
     graph.add_edge("talent", "planner")
-
-    # planner → conditional routing (iterate/proceed/abort)
-    graph.add_conditional_edges("planner", route_after_planner)
 
     # reporter → END (final report generated)
     graph.add_edge("reporter", END)

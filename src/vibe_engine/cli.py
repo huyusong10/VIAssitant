@@ -65,7 +65,7 @@ def parse_args(argv=None):
         "--expert",
         type=int,
         default=None,
-        help="Number of initial experts to dispatch (3-6, default: Planner decides)",
+        help="(Deprecated) Planner now selects experts automatically.",
     )
     return parser.parse_args(argv)
 
@@ -221,26 +221,14 @@ def run_cli(argv=None):
     target_phases = MODE_TO_PHASES.get(args.mode, MODE_TO_PHASES["full"])
     start_phase = target_phases[0]
 
-    # Initial expert selection
-    from vibe_engine.config import EXPERT_DIMENSIONS, PHASE_CONFIGS
+    from vibe_engine.config import EXPERT_DIMENSIONS
     expert_dims = {d["id"]: d for d in EXPERT_DIMENSIONS}
-
-    # Default initial experts based on phase config bounds
-    phase_config = PHASE_CONFIGS[start_phase]
-    default_count = phase_config["expert_count_min"]
-    if args.expert:
-        default_count = max(phase_config["expert_count_min"],
-                           min(args.expert, phase_config["expert_count_max"]))
-
-    # Pick first N expert IDs as defaults for the initial round
-    initial_experts = list(range(1, default_count + 1))
 
     phase_labels = " → ".join(PHASE_NAMES.get(p, p) for p in target_phases)
     console.print(f"[bold]模式：[/bold] {args.mode} ({phase_labels})")
-    console.print(f"[bold]Vibe：[/bold] {vibe}")
-    console.print(f"[bold]初始专家数：[/bold] {len(initial_experts)}\n")
+    console.print(f"[bold]Vibe：[/bold] {vibe}\n")
 
-    # Build initial state
+    # Build initial state — Planner will select experts on the first round
     initial_state = {
         "vibe": vibe,
         "vibe_original": vibe,
@@ -255,8 +243,9 @@ def run_cli(argv=None):
         "current_planner_decision": None,
         "final_report": None,
         "messages": [],
-        "selected_experts": initial_experts,
+        "selected_experts": [],
         "abort_reason": None,
+        "routing_action": None,
         "target_phases": target_phases,
         "session_id": None,
     }
@@ -273,13 +262,10 @@ def run_cli(argv=None):
         expert_batch = []  # accumulate expert results for current round
 
         console.print(
-            Rule(f"[bold magenta]阶段：{PHASE_NAMES.get(start_phase, start_phase)}  第 1 轮[/bold magenta]")
+            Rule(f"[bold magenta]阶段：{PHASE_NAMES.get(start_phase, start_phase)}[/bold magenta]")
         )
 
-        expert_names = [expert_dims.get(eid, {}).get("name", f"专家{eid}") for eid in initial_experts]
-        console.print(
-            f"[cyan]专家 [{', '.join(expert_names)}] 正在深度思考...[/cyan]"
-        )
+        console.print("[cyan]Planner 正在规划首轮专家组合...[/cyan]")
 
         with console.status("[cyan]分析进行中...[/cyan]", spinner="dots"):
             final_state = graph.invoke(initial_state)

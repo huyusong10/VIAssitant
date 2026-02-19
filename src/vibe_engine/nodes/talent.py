@@ -98,9 +98,15 @@ def talent_node(state: VibeState) -> dict:
         A partial VibeState update dict with talent_summaries,
         current_talent_summary, and think content.
     """
-    expert_results = state.get("expert_results", [])
     phase = state.get("phase", "discovery")
     round_num = state.get("round", 1)
+
+    # Filter expert_results to only the current round's results
+    all_results = state.get("expert_results", [])
+    expert_results = [
+        r for r in all_results
+        if r.get("phase") == phase and r.get("round_num") == round_num
+    ]
 
     # Determine Talent role from phase configuration
     phase_config = PHASE_CONFIGS.get(phase, PHASE_CONFIGS["discovery"])

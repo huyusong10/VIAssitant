@@ -21,6 +21,8 @@ class ExpertResult(TypedDict):
     """Structured output from a single expert node."""
     expert_id: int
     expert_name: str
+    phase: str                # Which phase produced this result
+    round_num: int            # Which round produced this result
     logic_chain: str          # 逻辑链条
     conclusion: str           # 精简结论
     risk_points: str          # 核心风险点
@@ -72,7 +74,8 @@ class VibeState(TypedDict):
 
     # --- Expert Outputs ---
     expert_results: Annotated[list[ExpertResult], lambda a, b: a + b]
-    # ^ Annotated with a custom reducer so fan-in parallel writes append correctly
+    # ^ Annotated with a custom reducer so fan-in parallel writes append correctly.
+    # Expert results include phase/round_num for filtering by Talent.
 
     # --- Talent & Planner Outputs ---
     talent_summaries: Annotated[list[TalentSummary], lambda a, b: a + b]
@@ -87,6 +90,9 @@ class VibeState(TypedDict):
     messages: Annotated[list[Any], add_messages]  # Reserved for LangGraph compat
     selected_experts: list[int]      # Expert IDs selected for the current round
     abort_reason: str | None         # Populated on abort decision
+
+    # --- Routing ---
+    routing_action: str | None       # Planner's routing signal: "dispatch" | "report" | "abort"
 
     # --- Mode Control ---
     target_phases: list[str]         # Phases to run (e.g. ["discovery","targeting","validation"])

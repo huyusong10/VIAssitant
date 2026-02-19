@@ -169,6 +169,8 @@ def _call_expert(expert_id: int, vibe: str, phase: str, round_num: int) -> Exper
     result: ExpertResult = {
         "expert_id": expert_id,
         "expert_name": expert_dim["name"],
+        "phase": phase,
+        "round_num": round_num,
         "logic_chain": parsed["logic_chain"],
         "conclusion": parsed["conclusion"],
         "risk_points": parsed["risk_points"],
@@ -195,7 +197,8 @@ def expert_node(state: ExpertInput) -> dict:
 
     result = _call_expert(expert_id, vibe, phase, round_num)
 
-    # Append to expert_results using the annotated reducer (list append)
+    # Append to expert_results (full historical archive).
+    # Talent filters by phase/round_num to get current round results.
     return {"expert_results": [result]}
 
 
