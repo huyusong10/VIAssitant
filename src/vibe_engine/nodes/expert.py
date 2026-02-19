@@ -80,6 +80,48 @@ def _parse_expert_output(raw: str) -> dict[str, str]:
     return sections
 
 
+def _parse_targets(raw: str) -> list[str]:
+    """Parse recommended targets from expert output (targeting phase).
+
+    Looks for a '### 推荐标的' section and extracts target names/codes.
+    Falls back to extracting $SYMBOL$ patterns if section parsing fails.
+    """
+    targets = []
+
+    # Try section-based extraction first
+    section_match = re.search(r"###\s*推荐标的\s*\n(.*?)(?=###|\Z)", raw, re.DOTALL)
+    if section_match:
+        section_text = section_match.group(1).strip()
+        # Extract items — look for lines starting with - or numbers
+        for line in section_text.split("\n"):
+            line = line.strip()
+            if line and (line.startswith("-") or line.startswith("*") or
+                         (len(line) > 1 and line[0].isdigit() and line[1] in ".、)）")):
+                # Clean up the line
+                cleaned = re.sub(r"^[-*\d.、)）]+\s*", "", line).strip()
+                if cleaned:
+                    targets.append(cleaned)
+
+    # Also extract $SYMBOL$ patterns anywhere in the output
+    symbol_matches = re.findall(r"\$([A-Za-z0-9.\u4e00-\u9fff]+(?:\.[A-Z]{1,4})?)\$", raw)
+    for sym in symbol_matches:
+        if sym not in targets:
+            targets.append(sym)
+
+    return targets
+
+
+def _parse_data_logic_chain(raw: str) -> str:
+    """Parse data logic chain from expert output (validation phase).
+
+    Looks for a '### 数据推导链' section and returns its content.
+    """
+    match = re.search(r"###\s*数据推导链\s*\n(.*?)(?=###|\Z)", raw, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
 def _call_expert(expert_id: int, vibe: str, phase: str, round_num: int) -> ExpertResult:
     """Core expert analysis logic — shared by both fan-out and standalone modes.
 
@@ -120,6 +162,10 @@ def _call_expert(expert_id: int, vibe: str, phase: str, round_num: int) -> Exper
 
     parsed = _parse_expert_output(raw_content)
 
+    # S5.3 / S5.4: Parse phase-specific fields
+    targets = _parse_targets(raw_content) if phase == "targeting" else []
+    data_logic = _parse_data_logic_chain(raw_content) if phase == "validation" else ""
+
     result: ExpertResult = {
         "expert_id": expert_id,
         "expert_name": expert_dim["name"],
@@ -127,9 +173,8 @@ def _call_expert(expert_id: int, vibe: str, phase: str, round_num: int) -> Exper
         "conclusion": parsed["conclusion"],
         "risk_points": parsed["risk_points"],
         "think_content": think_content,
-        # Phase-specific fields — empty by default, filled in S5+
-        "targets": [],
-        "data_logic_chain": "",
+        "targets": targets,
+        "data_logic_chain": data_logic,
     }
     return result
 

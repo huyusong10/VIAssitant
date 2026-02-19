@@ -26,6 +26,7 @@ from vibe_engine.config import (
     DEEPSEEK_BASE_URL,
     MODEL_CHAT,
     PHASE_CONFIGS,
+    PHASE_ORDER,
     EXPERT_DIMENSIONS,
 )
 
@@ -139,6 +140,14 @@ def _validate_and_clamp(parsed: dict, phase: str, round_num: int) -> PlannerDeci
             seen.add(eid)
             selected.append(eid)
 
+    # Use next phase's bounds for expert count if proceeding
+    if decision == "proceed":
+        next_phase = _get_next_phase(phase)
+        if next_phase:
+            next_config = PHASE_CONFIGS.get(next_phase, phase_config)
+            expert_min = next_config["expert_count_min"]
+            expert_max = next_config["expert_count_max"]
+
     # Clamp to phase bounds
     if len(selected) < expert_min:
         # Pad with random unseen experts
@@ -157,8 +166,19 @@ def _validate_and_clamp(parsed: dict, phase: str, round_num: int) -> PlannerDeci
     )
 
 
+def _get_next_phase(current_phase: str) -> str | None:
+    """Return the next phase in the pipeline, or None if current is the last."""
+    try:
+        idx = PHASE_ORDER.index(current_phase)
+        if idx + 1 < len(PHASE_ORDER):
+            return PHASE_ORDER[idx + 1]
+    except ValueError:
+        pass
+    return None
+
+
 def planner_node(state: VibeState) -> dict:
-    """LangGraph node function for the Planner control valve (S4).
+    """LangGraph node function for the Planner control valve (S4+S5).
 
     Receives the current VibeState (including talent summary),
     calls DeepSeek Chat for a fast routing decision, and returns
@@ -169,15 +189,10 @@ def planner_node(state: VibeState) -> dict:
     2. Generate Vibe mutation (vibe_next) when iterating
     3. Select experts for the next round
     4. Enforce round limits per phase (auto-abort)
+    5. Handle phase transitions on "proceed" (S5.2)
 
     Returns:
-        A partial VibeState update dict with:
-        - planner_decisions: appended decision record
-        - current_planner_decision: latest decision (for routing)
-        - vibe / vibe_history: updated on iterate
-        - selected_experts: for next round's fan-out
-        - round: incremented on iterate
-        - abort_reason: populated on abort
+        A partial VibeState update dict.
     """
     phase = state.get("phase", "discovery")
     round_num = state.get("round", 1)
@@ -243,6 +258,18 @@ def planner_node(state: VibeState) -> dict:
         update["abort_reason"] = abort_reason
 
     elif decision["decision"] == "proceed":
-        update["selected_experts"] = decision["selected_experts"]
+        # S5.2: Phase transition
+        next_phase = _get_next_phase(phase)
+        if next_phase:
+            # Advance to next phase
+            update["phase"] = next_phase
+            update["round"] = 1
+            update["selected_experts"] = decision["selected_experts"]
+            # Don't clear expert_results — keep accumulated for final report
+        else:
+            # Last phase completed — signal workflow completion
+            # The graph routing will detect this and route to reporter
+            pass
 
     return update
+

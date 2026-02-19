@@ -32,10 +32,43 @@ def get_expert_system_prompt(expert_id: int) -> str:
     return template.format(name=dim["name"], description=dim["description"])
 
 
+# Phase-specific instructions injected into the expert user prompt
+EXPERT_PHASE_INSTRUCTIONS = {
+    "discovery": "",
+    "targeting": """## 标的锁定阶段特殊要求
+请在分析中**必须**提出具体的可投资标的，包括但不限于：
+- 具体股票代码（如 $AAPL.US$, $600519.SH$）
+- 加密货币 Token（如 $BTC, $ETH）
+- 产业链关键节点公司
+
+请在输出末尾额外添加以下格式：
+### 推荐标的
+（列出 1-5 个具体标的，每个标的附带一句话理由）""",
+    "validation": """## 逻辑验证阶段特殊要求
+请对给定的具体标的进行**严谨的数据逻辑推导**，包括：
+- 财务数据验证（营收结构、利润率、增速）
+- 估值合理性（PE/PS/PB 对比同行）
+- 筹码/链上数据分析（如适用）
+- 关键假设的敏感性分析
+
+请在输出末尾额外添加以下格式：
+### 数据推导链
+（步骤化的数据推导过程，每步标注数据来源或假设依据）""",
+}
+
+
 def get_expert_user_prompt(vibe: str, phase: str, round_num: int) -> str:
-    """Return the user message for an expert analysis call."""
+    """Return the user message for an expert analysis call.
+
+    Injects phase-specific instructions for targeting (concrete targets)
+    and validation (data logic chain) phases.
+    """
     template = _load("expert_user.md")
-    return template.format(vibe=vibe, phase=phase, round=round_num)
+    phase_instruction = EXPERT_PHASE_INSTRUCTIONS.get(phase, "")
+    return template.format(
+        vibe=vibe, phase=phase, round=round_num,
+        phase_instruction=phase_instruction,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -235,3 +268,127 @@ def get_planner_user_prompt(
         synthesis_score=talent_summary.get("synthesis_score", 0),
     )
 
+
+# ---------------------------------------------------------------------------
+# Final Report prompts  (S5)
+# ---------------------------------------------------------------------------
+
+FINAL_REPORT_SYSTEM_PROMPT = """\
+你是一位资深投资分析报告撰写专家。你的任务是基于完整的多阶段分析过程，
+生成一份结构化的投资建议报告。
+
+## 报告结构（严格遵守）
+
+### 一、执行摘要
+（2-3 句话总结核心结论：建议/否决，核心理由）
+
+### 二、Vibe 回溯
+（原始直觉 → 经过分析后的认知演变轨迹）
+
+### 三、多维分析总结
+（各阶段关键发现，按阶段分小节）
+
+#### 价值发现阶段
+（核心矛盾、涌现假设、信息缺口）
+
+#### 标的锁定阶段
+（推荐标的及筛选逻辑，若有）
+
+#### 逻辑验证阶段
+（数据验证结论，盈亏比评估，若有）
+
+### 四、推荐标的
+（最终推荐/否决的具体标的列表，附理由）
+
+### 五、核心风险提示
+（按重要性排序的 3-5 条风险）
+
+### 六、结论与建议
+（最终投资建议：买入/观望/回避，以及后续关注要点）
+
+---
+使用中文输出。
+"""
+
+FINAL_REPORT_USER_TEMPLATE = """\
+## 原始 Vibe
+{vibe_original}
+
+## Vibe 演变历史
+{vibe_history}
+
+## 各阶段分析记录
+
+{phase_records}
+
+## 最终 Planner 决策
+{final_decision}
+
+---
+请基于以上完整的分析过程，生成结构化投资建议报告。
+"""
+
+
+def get_final_report_system_prompt() -> str:
+    """Return the system prompt for final report generation."""
+    return FINAL_REPORT_SYSTEM_PROMPT
+
+
+def get_final_report_user_prompt(
+    vibe_original: str,
+    vibe_history: list[str],
+    talent_summaries: list[dict],
+    planner_decisions: list[dict],
+    expert_results: list[dict],
+) -> str:
+    """Format the final report user prompt with full analysis history."""
+    # Vibe history
+    vibe_hist_text = "\n".join(
+        f"  - Vibe_{i}: {v}" for i, v in enumerate(vibe_history)
+    )
+
+    # Phase records — group talent summaries by phase
+    phase_records = []
+    for ts in talent_summaries:
+        phase_records.append(
+            f"### [{ts.get('phase', '?')}] 第 {ts.get('round_num', '?')} 轮 — Talent 总结\n"
+            f"核心矛盾点：{ts.get('core_contradictions', '')}\n"
+            f"涌现假设：{ts.get('emergent_hypothesis', '')}\n"
+            f"综合评分：{ts.get('synthesis_score', '?')}/10\n"
+        )
+
+    # Add expert targets/data chains if available
+    targets_seen = []
+    data_chains = []
+    for er in expert_results:
+        if er.get("targets"):
+            targets_seen.append(
+                f"专家{er['expert_id']}·{er.get('expert_name','')}: {', '.join(er['targets'])}"
+            )
+        if er.get("data_logic_chain"):
+            data_chains.append(
+                f"专家{er['expert_id']}·{er.get('expert_name','')}: {er['data_logic_chain']}"
+            )
+
+    if targets_seen:
+        phase_records.append("### 标的锁定结果\n" + "\n".join(targets_seen))
+    if data_chains:
+        phase_records.append("### 数据推导链\n" + "\n".join(data_chains))
+
+    # Final decision
+    if planner_decisions:
+        last = planner_decisions[-1]
+        final_decision = (
+            f"充分度评分: {last.get('sufficiency_score', '?')}/10\n"
+            f"决策: {last.get('decision', '?')}\n"
+            f"理由: {last.get('reasoning', '')}"
+        )
+    else:
+        final_decision = "（无 Planner 决策记录）"
+
+    return FINAL_REPORT_USER_TEMPLATE.format(
+        vibe_original=vibe_original,
+        vibe_history=vibe_hist_text,
+        phase_records="\n\n".join(phase_records),
+        final_decision=final_decision,
+    )

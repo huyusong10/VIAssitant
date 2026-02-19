@@ -135,7 +135,7 @@
 
 **目标**：将价值发现、标的锁定、逻辑验证三个阶段串联为完整流水线。
 
-- [ ] **S5.1** 定义阶段枚举与配置：
+- [x] **S5.1** 定义阶段枚举与配置：
   ```python
   phases = {
     "discovery":  {"max_rounds": 5, "expert_count": (3, 6), "talent_role": "strategist"},
@@ -144,13 +144,13 @@
   }
   ```
   - 验证：配置可被 Planner 和 Talent 正确读取
-- [ ] **S5.2** 实现阶段转换：当 Planner 判定当前阶段 proceed 时，State 的 `phase` 自动递进
+- [x] **S5.2** 实现阶段转换：当 Planner 判定当前阶段 proceed 时，State 的 `phase` 自动递进
   - 验证：从 discovery 开始，经过 proceed 后 State.phase 变为 targeting
-- [ ] **S5.3** 实现标的锁定阶段的特殊输出：专家需输出具体标的（股票代码/Token/产业链节点）
+- [x] **S5.3** 实现标的锁定阶段的特殊输出：专家需输出具体标的（股票代码/Token/产业链节点）
   - 验证：targeting 阶段的 expert_results 中包含 `targets` 字段
-- [ ] **S5.4** 实现逻辑验证阶段的特殊输出：专家需输出数据推导链
+- [x] **S5.4** 实现逻辑验证阶段的特殊输出：专家需输出数据推导链
   - 验证：validation 阶段的 expert_results 中包含 `data_logic_chain` 字段
-- [ ] **S5.5** 实现最终报告生成：三个阶段全部完成后，汇总生成结构化投资建议报告
+- [x] **S5.5** 实现最终报告生成：三个阶段全部完成后，汇总生成结构化投资建议报告
   - 验证：最终 State 包含 `final_report` 字段，内容覆盖"结论 / 推荐标的 / 风险提示 / 全流程摘要"
 
 **完成标志**：三阶段顺序串联跑通，每个阶段内部可循环，最终输出完整报告。
