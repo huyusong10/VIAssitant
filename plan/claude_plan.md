@@ -112,19 +112,19 @@
 
 **目标**：实现信息充分度评估、Vibe 变异循环、轮数控制。
 
-- [ ] **S4.1** 实现 Planner 节点：接收 `talent_summary`，调用 DeepSeek Chat 模型进行充分度评估
+- [x] **S4.1** 实现 Planner 节点：接收 `talent_summary`，调用 DeepSeek Chat 模型进行充分度评估
   - 输出：`sufficiency_score`（0-10）, `decision`（"proceed" / "iterate" / "abort"）, `reasoning`
   - 验证：传入一个明显信息不足的 talent_summary，decision 应为 "iterate"
-- [ ] **S4.2** 实现 Vibe 变异（Vibe Mutation）：当 decision="iterate" 时，Planner 融合 talent 总结生成 `vibe_next`
+- [x] **S4.2** 实现 Vibe 变异（Vibe Mutation）：当 decision="iterate" 时，Planner 融合 talent 总结生成 `vibe_next`
   - 验证：`vibe_next` 与 `vibe_0` 不同，且包含 talent 总结中的关键信息
-- [ ] **S4.3** 实现条件路由：在 LangGraph 中添加 conditional_edge
+- [x] **S4.3** 实现条件路由：在 LangGraph 中添加 conditional_edge
   - `proceed` → 进入下一阶段（或 END）
   - `iterate` → 回到 expert_swarm 重新发散
   - `abort` → 直接 END 并输出失败报告
   - 验证：分别 mock 三种 decision，检查图的执行路径是否正确
-- [ ] **S4.4** 实现轮数限制：每个阶段有独立的 `max_rounds` 配置，达到上限自动 abort
+- [x] **S4.4** 实现轮数限制：每个阶段有独立的 `max_rounds` 配置，达到上限自动 abort
   - 验证：设置 max_rounds=1，第二轮时 decision 被强制设为 "abort"
-- [ ] **S4.5** 实现专家选取逻辑：Planner 根据当前阶段和信息缺口选择 3-6 个专家
+- [x] **S4.5** 实现专家选取逻辑：Planner 根据当前阶段和信息缺口选择 3-6 个专家
   - 验证：Planner 输出的 `selected_experts` 列表长度在 [1, 10] 范围内，且含专家 ID
 
 **完成标志**：Planner 能动态评估、变异 Vibe、控制循环次数，图具备有向循环能力。

@@ -130,21 +130,108 @@ PLANNER_SYSTEM_PROMPT = """\
 2. 若信息不足，将 Talent 的关键洞见融合到原始 Vibe 中，生成进化后的 Vibe_Next
 3. 选取下一轮最需要的专家维度
 
+## 当前上下文
+- 当前阶段：{phase}
+- 当前轮次：第 {round} 轮（最大 {max_rounds} 轮）
+
 ## 决策规则
 - 若综合评分 ≥ 7，且逻辑基本闭环 → 决策为 "proceed"（推进到下一阶段）
 - 若综合评分 < 7，且未达到最大轮数 → 决策为 "iterate"（发起新一轮发散）
 - 若已达最大轮数但信息仍不充分 → 决策为 "abort"（终止并返回失败状态）
 
-## 输出格式（JSON）
+## 可选专家列表
+{expert_roster}
+
+## 输出格式（严格 JSON，不要添加其他内容）
 ```json
-{
+{{
   "sufficiency_score": <0-10 整数>,
   "decision": "<proceed|iterate|abort>",
   "reasoning": "<一段决策依据>",
   "vibe_next": "<融合后的新 Vibe，仅 iterate 时填写，否则为空字符串>",
   "selected_experts": [<专家ID列表，1-10之间的整数>]
-}
+}}
 ```
 
 使用中文输出（JSON 字段值部分）。
 """
+
+PLANNER_USER_TEMPLATE = """\
+## 当前 Vibe
+{vibe_current}
+
+## 原始 Vibe（用户初始直觉）
+{vibe_original}
+
+## Talent 综合分析（阶段：{phase}，第 {round} 轮）
+
+### 核心矛盾点
+{core_contradictions}
+
+### 涌现假设
+{emergent_hypothesis}
+
+### Talent 综合评分
+{synthesis_score}/10
+
+---
+
+当前是第 {round}/{max_rounds} 轮。请根据上述信息做出决策。
+
+若决策为 "iterate"：
+1. 将 Talent 的关键洞见融入当前 Vibe，生成更聚焦的 Vibe_Next
+2. 选择最能填补信息缺口的专家
+
+若决策为 "proceed"：
+1. 选择下一阶段最需要的专家
+
+若决策为 "abort"：
+1. 说明信息不足的具体原因
+"""
+
+
+def _build_expert_roster() -> str:
+    """Build a formatted expert roster string for the Planner prompt."""
+    lines = []
+    for d in EXPERT_DIMENSIONS:
+        lines.append(f"  {d['id']}. {d['name']}：{d['description']}")
+    return "\n".join(lines)
+
+
+def get_planner_system_prompt(phase: str, round_num: int, max_rounds: int) -> str:
+    """Return the system prompt for the Planner node with current context."""
+    return PLANNER_SYSTEM_PROMPT.format(
+        phase=phase,
+        round=round_num,
+        max_rounds=max_rounds,
+        expert_roster=_build_expert_roster(),
+    )
+
+
+def get_planner_user_prompt(
+    talent_summary: dict | None,
+    vibe_current: str,
+    vibe_original: str,
+    phase: str,
+    round_num: int,
+    max_rounds: int,
+) -> str:
+    """Format the Planner's user prompt with Talent synthesis and Vibe context."""
+    if talent_summary is None:
+        talent_summary = {
+            "core_contradictions": "（无 Talent 分析结果）",
+            "emergent_hypothesis": "（无 Talent 分析结果）",
+            "synthesis_score": 0,
+        }
+
+    return PLANNER_USER_TEMPLATE.format(
+        vibe_current=vibe_current,
+        vibe_original=vibe_original,
+        phase=phase,
+        round=round_num,
+        max_rounds=max_rounds,
+        core_contradictions=talent_summary.get("core_contradictions", ""),
+        emergent_hypothesis=talent_summary.get("emergent_hypothesis", ""),
+        synthesis_score=talent_summary.get("synthesis_score", 0),
+    )
+

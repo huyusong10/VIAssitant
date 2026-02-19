@@ -76,7 +76,7 @@ class VibeState(TypedDict):
 
     # --- Talent & Planner Outputs ---
     talent_summaries: Annotated[list[TalentSummary], lambda a, b: a + b]
-    planner_decisions: list[PlannerDecision]
+    planner_decisions: Annotated[list[PlannerDecision], lambda a, b: a + b]
     current_talent_summary: TalentSummary | None
     current_planner_decision: PlannerDecision | None
 
