@@ -115,4 +115,4 @@ The Planner maps LLM decisions to `routing_action` internally:
 This keeps LLM prompts simple (proceed/iterate/abort) while centralizing routing logic in `planner_node`.
 
 ### Sprint plan
-S0–S5 are done. Phase A-D architecture corrections are done. Remaining: S6 CLI interactivity (real-time streaming, `/think`, `/stop`), S7 config file override, S8 E2E validation. See `plan/claude_plan.md` for per-task checklists.
+S0–S6 are done. Phase A-D architecture corrections are done. Remaining: S7 config file override, S8 E2E validation. See `plan/claude_plan.md` for per-task checklists.

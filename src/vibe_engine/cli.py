@@ -2,20 +2,28 @@
 
 Supports the full S5 three-phase pipeline with real-time status display:
 - Phase transitions (discovery -> targeting -> validation)
-- Per-round expert fan-out status
-- Talent convergence summaries
+- Per-round expert fan-out status (S6.2: Real-time status display)
+- Talent convergence summaries (S6.3: Formatted summary output)
 - Planner decisions and Vibe mutation
 - Final report output
-- Interactive think viewer
+- Interactive think viewer (S6.4: On-demand think viewing)
+- Manual interruption support (S6.5: Ctrl+C handling)
 """
 
 import argparse
-from rich.console import Console
+import time
+from typing import Any
+
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 from rich.rule import Rule
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.layout import Layout
+from rich.align import Align
 
 console = Console()
 
@@ -64,6 +72,159 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+class StreamProcessor:
+    """Handles graph stream events and updates the CLI UI state."""
+
+    def __init__(self, start_phase: str):
+        self.phase = start_phase
+        self.round_num = 1
+        self.pending_experts: set[int] = set()
+        self.completed_experts: list[int] = []
+        self.current_action = "Initializing..."
+        self.history: list[Any] = []  # List of renderables (Panels, Rules) to keep above status
+        self.expert_results = [] # Accumulate for final display
+        
+        # Load expert names for display
+        from vibe_engine.config import EXPERT_DIMENSIONS
+        self.expert_map = {d["id"]: d["name"] for d in EXPERT_DIMENSIONS}
+
+    def process_chunk(self, chunk: dict) -> None:
+        """Process a stream chunk and update UI state."""
+        for node, updates in chunk.items():
+            if node == "planner":
+                self._handle_planner(updates)
+            elif node == "fan_out":
+                self._handle_fan_out(updates)
+            elif node == "expert":
+                self._handle_expert(updates)
+            elif node == "talent":
+                self._handle_talent(updates)
+            elif node == "reporter":
+                self._handle_reporter(updates)
+
+    def _handle_planner(self, updates: dict):
+        # Update phase/round if changed
+        if "phase" in updates:
+            self.phase = updates["phase"]
+        if "round" in updates:
+            self.round_num = updates["round"]
+
+        # Planner Decision
+        if "current_planner_decision" in updates:
+            dec = updates["current_planner_decision"]
+            if dec:
+                self.history.append(self._render_planner_decision(dec))
+        
+        # Routing Action
+        if "routing_action" in updates:
+            action = updates["routing_action"]
+            if action == "dispatch":
+                selected = updates.get("selected_experts", [])
+                if selected:
+                    # We anticipate these experts will start soon
+                    self.pending_experts = set(selected)
+                    self.completed_experts = []
+                    self.current_action = f"Planner selected {len(selected)} experts..."
+            elif action == "report":
+                self.current_action = "Generating Final Report..."
+            elif action == "abort":
+                self.current_action = "Aborting workflow..."
+
+    def _handle_fan_out(self, updates: dict):
+        if self.pending_experts:
+             self.current_action = "Dispatching Experts..."
+        # Fan out clears current results, so we're starting a fresh batch really
+
+    def _handle_expert(self, updates: dict):
+        results = updates.get("current_round_results", [])
+        for r in results:
+            eid = r.get("expert_id")
+            if eid in self.pending_experts:
+                self.pending_experts.remove(eid)
+            if eid not in self.completed_experts:
+                self.completed_experts.append(eid)
+            
+            # Store for final accumulation manually since we stream updates
+            self.expert_results.append(r)
+            
+            # Add a mini log
+            ename = self.expert_map.get(eid, "?")
+            self.history.append(Text(f"✓ Expert {eid} ({ename}) finished analysis", style="dim green"))
+
+    def _handle_talent(self, updates: dict):
+        summaries = updates.get("talent_summaries", [])
+        if summaries:
+            latest = summaries[-1]
+            self.history.append(self._render_talent_summary(latest))
+
+    def _handle_reporter(self, updates: dict):
+        # Report is handled in final accumulation, but we can log completion
+        pass
+
+    def get_renderable(self) -> Any:
+        """Return the current dynamic status panel."""
+        phase_name = PHASE_NAMES.get(self.phase, self.phase)
+        
+        status_text = Text()
+        status_text.append(f"Phase: {phase_name} | Round: {self.round_num}\n", style="bold magenta")
+        
+        if self.pending_experts:
+            status_text.append("\nThinking Experts:\n", style="bold yellow")
+            for eid in sorted(self.pending_experts):
+                ename = self.expert_map.get(eid, "?")
+                status_text.append(f" • [{eid}] {ename}...\n", style="yellow")
+        else:
+            status_text.append(f"\n{self.current_action}\n", style="cyan")
+
+        return Panel(
+            Align.left(status_text),
+            title="[bold green]System Status[/bold green]",
+            border_style="green",
+            padding=(1, 2)
+        )
+
+    def _render_talent_summary(self, summary: dict):
+        phase = summary.get("phase", "?")
+        round_num = summary.get("round_num", "?")
+        score = summary.get("synthesis_score", "?")
+        phase_name = PHASE_NAMES.get(phase, phase)
+        
+        return Panel(
+            f"[bold]核心矛盾点：[/bold]\n{summary.get('core_contradictions', '（无）')}\n\n"
+            f"[bold]涌现假设：[/bold]\n{summary.get('emergent_hypothesis', '（无）')}\n\n"
+            f"[bold]综合评分：[/bold] {score}/10",
+            title=f"[bold yellow]Talent 收敛 · {phase_name} 第 {round_num} 轮[/bold yellow]",
+            border_style="yellow",
+        )
+
+    def _render_planner_decision(self, decision: dict):
+        action = decision.get("decision", "?")
+        score = decision.get("sufficiency_score", "?")
+        reasoning = decision.get("reasoning", "")
+        
+        action_style = {
+            "proceed": "[bold green]PROCEED[/bold green]",
+            "iterate": "[bold yellow]ITERATE[/bold yellow]",
+            "abort": "[bold red]ABORT[/bold red]",
+        }.get(action, action)
+
+        content = (
+            f"[bold]决策：[/bold] {action_style}\n"
+            f"[bold]充分度评分：[/bold] {score}/10\n"
+            f"[bold]理由：[/bold] {reasoning}"
+        )
+        
+        vibe_next = decision.get("vibe_next", "")
+        if vibe_next and action == "iterate":
+            content += f"\n\n[bold]Vibe 变异：[/bold]\n{vibe_next}"
+
+        return Panel(
+            content,
+            title="[bold blue]Planner 裁决[/bold blue]",
+            border_style="blue",
+        )
+
+
 def _display_expert_result(result: dict, show_think: bool = False) -> None:
     """Render a single expert result in the console."""
     expert_name = result.get("expert_name", "Unknown")
@@ -103,60 +264,6 @@ def _display_expert_result(result: dict, show_think: bool = False) -> None:
         )
 
 
-def _display_talent_summary(summary: dict) -> None:
-    """Display a Talent convergence summary."""
-    phase = summary.get("phase", "?")
-    round_num = summary.get("round_num", "?")
-    score = summary.get("synthesis_score", "?")
-    phase_name = PHASE_NAMES.get(phase, phase)
-
-    console.print(
-        Panel(
-            f"[bold]核心矛盾点：[/bold]\n{summary.get('core_contradictions', '（无）')}\n\n"
-            f"[bold]涌现假设：[/bold]\n{summary.get('emergent_hypothesis', '（无）')}\n\n"
-            f"[bold]综合评分：[/bold] {score}/10",
-            title=f"[bold yellow]Talent 收敛 · {phase_name} 第 {round_num} 轮[/bold yellow]",
-            border_style="yellow",
-        )
-    )
-
-
-def _display_planner_decision(decision: dict, phase: str, round_num: int) -> None:
-    """Display a Planner decision."""
-    action = decision.get("decision", "?")
-    score = decision.get("sufficiency_score", "?")
-    reasoning = decision.get("reasoning", "")
-    phase_name = PHASE_NAMES.get(phase, phase)
-
-    action_style = {
-        "proceed": "[bold green]PROCEED[/bold green]",
-        "iterate": "[bold yellow]ITERATE[/bold yellow]",
-        "abort": "[bold red]ABORT[/bold red]",
-    }.get(action, action)
-
-    content = (
-        f"[bold]决策：[/bold] {action_style}\n"
-        f"[bold]充分度评分：[/bold] {score}/10\n"
-        f"[bold]理由：[/bold] {reasoning}"
-    )
-
-    vibe_next = decision.get("vibe_next", "")
-    if vibe_next and action == "iterate":
-        content += f"\n\n[bold]Vibe 变异：[/bold]\n{vibe_next}"
-
-    selected = decision.get("selected_experts", [])
-    if selected:
-        content += f"\n[bold]下一轮专家：[/bold] {selected}"
-
-    console.print(
-        Panel(
-            content,
-            title=f"[bold blue]Planner 裁决 · {phase_name} 第 {round_num} 轮[/bold blue]",
-            border_style="blue",
-        )
-    )
-
-
 def _prompt_think_view(all_results: list[dict]) -> None:
     """Interactive loop to let user inspect expert/talent think content."""
     if not all_results:
@@ -165,7 +272,6 @@ def _prompt_think_view(all_results: list[dict]) -> None:
     while True:
         console.print(
             "\n[dim]输入专家编号查看完整思考过程（如 [bold]2[/bold]），"
-            "输入 [bold]/think talent[/bold] 查看 Talent 推理，"
             "或按 [bold]Enter[/bold] 退出：[/dim]",
             end=" ",
         )
@@ -190,122 +296,20 @@ def _prompt_think_view(all_results: list[dict]) -> None:
 
         # Show all results from this expert (may span multiple rounds)
         for m in matched:
+            phase_label = PHASE_NAMES.get(m.get('phase', ''), m.get('phase', '?'))
+            console.print(f"\n[bold]{phase_label} Round {m.get('round_num')}[/bold]")
             _display_expert_result(m, show_think=True)
 
 
-def run_cli(argv=None):
-    """Main CLI entrypoint — runs the full S5 three-phase pipeline."""
-    args = parse_args(argv)
-
-    console.print(Panel(Text(BANNER, style="bold cyan"), border_style="cyan"))
-    console.print(
-        "[bold green]Vibe Investment Engine[/bold green] — "
-        "[dim]多智能体发散-收敛投资分析引擎[/dim]\n"
-    )
-
-    vibe = args.vibe
-    if not vibe:
-        vibe = console.input("[bold yellow]请输入你的投资直觉（Vibe）：[/bold yellow] ").strip()
-
-    if not vibe:
-        console.print("[red]未提供 Vibe。退出。[/red]")
-        return
-
-    # Resolve mode to target phases
-    target_phases = MODE_TO_PHASES.get(args.mode, MODE_TO_PHASES["full"])
-    start_phase = target_phases[0]
-
-    from vibe_engine.config import EXPERT_DIMENSIONS
-    expert_dims = {d["id"]: d for d in EXPERT_DIMENSIONS}
-
-    phase_labels = " → ".join(PHASE_NAMES.get(p, p) for p in target_phases)
-    console.print(f"[bold]模式：[/bold] {args.mode} ({phase_labels})")
-    console.print(f"[bold]Vibe：[/bold] {vibe}\n")
-
-    # Build initial state — Planner will select experts on the first round
-    initial_state = {
-        "vibe": vibe,
-        "vibe_original": vibe,
-        "vibe_history": [vibe],
-        "phase": start_phase,
-        "round": 1,
-        "phase_round": {"discovery": 0, "targeting": 0, "validation": 0},
-        "expert_results": [],
-        "current_round_results": [],
-        "talent_summaries": [],
-        "planner_decisions": [],
-        "current_talent_summary": None,
-        "current_planner_decision": None,
-        "final_report": None,
-        "messages": [],
-        "selected_experts": [],
-        "abort_reason": None,
-        "routing_action": None,
-        "target_phases": target_phases,
-        "session_id": None,
-    }
-
-    # Run graph with streaming to show real-time progress
-    try:
-        from vibe_engine.graph import build_graph
-
-        graph = build_graph()
-
-        console.print(
-            Rule(f"[bold magenta]阶段：{PHASE_NAMES.get(start_phase, start_phase)}[/bold magenta]")
-        )
-
-        console.print("[cyan]Planner 正在规划首轮专家组合...[/cyan]")
-
-        with console.status("[cyan]分析进行中...[/cyan]", spinner="dots"):
-            final_state = graph.invoke(initial_state)
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]用户中断。退出。[/yellow]")
-        return
-    except Exception as e:
-        console.print(f"\n[red]错误：{e}[/red]")
-        raise
-
-    # Display accumulated results by phase/round
-    _display_final_results(final_state, expert_dims)
-
-
-def _display_final_results(state: dict, expert_dims: dict) -> None:
+def _display_final_results(state: dict) -> None:
     """Display the complete results after graph execution."""
-    talent_summaries = state.get("talent_summaries", [])
-    planner_decisions = state.get("planner_decisions", [])
     expert_results = state.get("expert_results", [])
     final_report = state.get("final_report")
     abort_reason = state.get("abort_reason")
     vibe_history = state.get("vibe_history", [])
 
-    # Display Talent summaries and Planner decisions in order
-    for i, ts in enumerate(talent_summaries):
-        phase = ts.get("phase", "?")
-        round_num = ts.get("round_num", "?")
-        phase_name = PHASE_NAMES.get(phase, phase)
-
-        console.print(
-            Rule(f"[bold magenta]{phase_name}  第 {round_num} 轮 — 结果[/bold magenta]")
-        )
-
-        # Show expert results for this phase/round
-        round_experts = [
-            r for r in expert_results
-            if r.get("phase") == phase and r.get("round_num") == round_num
-        ]
-        if round_experts:
-            for r in round_experts:
-                _display_expert_result(r)
-
-        _display_talent_summary(ts)
-
-        # Planner decisions list includes the initial planning decision too,
-        # so align by offset: talent #i corresponds to planner decision #(i+1)
-        planner_idx = i + 1  # skip the initial planning decision
-        if planner_idx < len(planner_decisions):
-            _display_planner_decision(planner_decisions[planner_idx], phase, round_num)
+    # We skip Talent/Planner here since they were shown in stream, 
+    # unless we want to recap. Let's stick to Report + Recap Table.
 
     # Vibe evolution
     if len(vibe_history) > 1:
@@ -358,3 +362,124 @@ def _display_final_results(state: dict, expert_dims: dict) -> None:
         _prompt_think_view(expert_results)
 
     console.print("\n[bold green]Vibe 分析会话结束。[/bold green]")
+
+
+def run_cli(argv=None):
+    """Main CLI entrypoint — runs the full S5 three-phase pipeline."""
+    args = parse_args(argv)
+
+    console.print(Panel(Text(BANNER, style="bold cyan"), border_style="cyan"))
+    console.print(
+        "[bold green]Vibe Investment Engine[/bold green] — "
+        "[dim]多智能体发散-收敛投资分析引擎[/dim]\n"
+    )
+
+    vibe = args.vibe
+    if not vibe:
+        vibe = console.input("[bold yellow]请输入你的投资直觉（Vibe）：[/bold yellow] ").strip()
+
+    if not vibe:
+        console.print("[red]未提供 Vibe。退出。[/red]")
+        return
+
+    # Resolve mode to target phases
+    target_phases = MODE_TO_PHASES.get(args.mode, MODE_TO_PHASES["full"])
+    start_phase = target_phases[0]
+
+    phase_labels = " → ".join(PHASE_NAMES.get(p, p) for p in target_phases)
+    console.print(f"[bold]模式：[/bold] {args.mode} ({phase_labels})")
+    console.print(f"[bold]Vibe：[/bold] {vibe}\n")
+
+    # Build initial state
+    initial_state = {
+        "vibe": vibe,
+        "vibe_original": vibe,
+        "vibe_history": [vibe],
+        "phase": start_phase,
+        "round": 1,
+        "phase_round": {"discovery": 0, "targeting": 0, "validation": 0},
+        "expert_results": [],
+        "current_round_results": [],
+        "talent_summaries": [],
+        "planner_decisions": [],
+        "current_talent_summary": None,
+        "current_planner_decision": None,
+        "final_report": None,
+        "messages": [],
+        "selected_experts": [],
+        "abort_reason": None,
+        "routing_action": None,
+        "target_phases": target_phases,
+        "session_id": None,
+    }
+
+    # Run graph with streaming
+    from vibe_engine.graph import build_graph
+    graph = build_graph()
+    
+    processor = StreamProcessor(start_phase)
+    final_state = initial_state # Fallback if interrupted immediately
+
+    # Accumulated state for final display (reconstruct from stream or use last yield)
+    # Actually graph.stream chunks are updates. We need to merge them to get final state.
+    # But since we only need expert_results and report for final display, we can track them.
+    # Better: just re-merge updates into a local state dict.
+    
+    accumulated_state = initial_state.copy()
+
+    try:
+        with Live(processor.get_renderable(), refresh_per_second=4, console=console) as live:
+            console.print(Rule(f"[bold magenta]工作流启动：{PHASE_NAMES.get(start_phase, start_phase)}[/bold magenta]"))
+            
+            for chunk in graph.stream(initial_state, stream_mode="updates"):
+                # Update accumulated state
+                for node, update in chunk.items():
+                    # Handle list fields with reducers separately to avoid overwriting
+                    list_fields = ["expert_results", "talent_summaries", "planner_decisions"]
+                    
+                    for field in list_fields:
+                        if field in update:
+                            if field not in accumulated_state or not isinstance(accumulated_state[field], list):
+                                accumulated_state[field] = []
+                            # Start with existing, extend with new
+                            # But wait: accumulated_state.update() below would clobber if we don't protect it
+                            # So we extract the new items, then remove from update dict before calling update()?
+                            # Better: update everything else, then extend these.
+                            pass
+
+                    # 1. Update scalar/last-write-wins fields
+                    scalar_update = {k: v for k, v in update.items() if k not in list_fields}
+                    accumulated_state.update(scalar_update)
+                    
+                    # 2. Append list fields
+                    for field in list_fields:
+                        if field in update:
+                            if field not in accumulated_state:
+                                accumulated_state[field] = []
+                            accumulated_state[field].extend(update[field])
+
+                    # Special handling for "vibe_history" which is a list but planner sends the FULL list
+                    if "vibe_history" in update:
+                        accumulated_state["vibe_history"] = update["vibe_history"]
+
+                # Update UI
+                processor.process_chunk(chunk)
+                
+                # Show any history items generated by the processor
+                while processor.history:
+                     item = processor.history.pop(0)
+                     console.print(item)
+                
+                live.update(processor.get_renderable())
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]用户中断。正在生成当前结果...[/yellow]")
+    except Exception as e:
+        console.print(f"\n[red]错误：{e}[/red]")
+        raise
+
+    # Display accumulated results
+    _display_final_results(accumulated_state)
+
+if __name__ == "__main__":
+    run_cli()

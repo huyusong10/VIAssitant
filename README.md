@@ -213,7 +213,7 @@ VIAssitant/
 | S4 | Done | Planner 控制阀 | 充分度评估 + Vibe 变异循环 |
 | S5 | Done | 三阶段工作流串联 | 价值发现→标的锁定→逻辑验证 + 最终报告 |
 | GAP | Done | 架构更正 (Phase A-D) | Planner-first 拓扑 + expert_results 双轨 + State 字段调整 |
-| S6 | Planned | CLI 交互体验 | 实时状态展示 + 人工打断 |
+| S6 | Done | CLI 交互体验 | 实时状态展示 + 人工打断 |
 | S7 | Planned | 模式切换与配置 | 配置文件覆盖 |
 | S8 | Planned | 端到端验收 | 完整流程跑通 + 输出报告 |
 
