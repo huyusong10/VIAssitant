@@ -103,23 +103,14 @@ def route_after_planner(state: VibeState) -> str:
     elif action == "proceed":
         # Check if we've transitioned to a new phase or completed the workflow.
         # The planner_node already updated state["phase"] to the next phase
-        # if one exists. If no next phase, it didn't change the phase,
-        # meaning we should generate the final report.
+        # if one exists within target_phases. If no next phase, it didn't change
+        # the phase, meaning we should generate the final report.
         current_phase = state.get("phase", "discovery")
+        target_phases = state.get("target_phases", PHASE_ORDER)
 
-        # If the planner's decision was made in the last phase,
-        # the phase wouldn't have changed — generate report.
-        # We detect this by checking if the decision's reasoning phase
-        # matches the last phase in PHASE_ORDER.
-        planner_decisions = state.get("planner_decisions", [])
-        if planner_decisions:
-            # The latest decision was just appended; check the phase
-            # it was made in (which the planner recorded in its update).
-            # Since planner updates phase on proceed (to next), if phase
-            # is still the same as PHASE_ORDER[-1], workflow is done.
-            if current_phase == PHASE_ORDER[-1]:
-                # Check if planner didn't advance (no next phase)
-                return "reporter"
+        # If the current phase is the last target phase, workflow is done
+        if current_phase == target_phases[-1]:
+            return "reporter"
 
         # Otherwise, we've transitioned to a new phase — re-enter the loop
         return "fan_out"

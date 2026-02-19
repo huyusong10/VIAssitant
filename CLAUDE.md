@@ -12,10 +12,14 @@ uv sync
 uv run python main.py
 
 # Run with a pre-set vibe (skips prompt)
-uv run python main.py --vibe "看好固态电池" --expert 2
+uv run python main.py --vibe "看好固态电池"
 
-# Run with a specific expert (1-10) and mode
-uv run python main.py --vibe "..." --expert 7 --mode discovery
+# Run with initial expert count and mode
+uv run python main.py --vibe "..." --expert 4 --mode discovery
+
+# Run specific mode combinations
+uv run python main.py --vibe "..." --mode 1+2      # 价值发现 + 标的锁定
+uv run python main.py --vibe "..." --mode full      # 完整三阶段
 
 # Quick import / smoke test (no LLM call)
 uv run python -c "import sys; sys.path.insert(0,'src'); from vibe_engine.graph import build_graph; print(build_graph())"
@@ -25,37 +29,54 @@ uv run python -c "import sys; sys.path.insert(0,'src'); from vibe_engine.graph i
 
 ## Architecture
 
-This is a **LangGraph FSM** implementing a multi-agent investment analysis engine. Development follows a sprint plan (`plan/claude_plan.md`); only S0–S1 are currently implemented.
+This is a **LangGraph FSM** implementing a multi-agent investment analysis engine. Development follows a sprint plan (`plan/claude_plan.md`); S0–S5 are implemented.
 
-### Data flow (target, S1–S5)
+### Data flow (S5 — current)
 ```
-User Vibe → Planner → fan-out Expert_Swarm (N parallel) → fan-in → Talent → Planner (loop/proceed/abort) → Final Report
+User Vibe → fan_out → Expert_Swarm (N parallel via Send())
+         → fan-in (reducer) → Talent (convergence)
+         → Planner (sufficiency check)
+           ├── iterate → Vibe mutation → fan_out (same phase loop)
+           ├── proceed → next phase fan_out / reporter (if last phase)
+           └── abort → END
+         → Reporter → Final Report → END
 ```
+
+### Three-phase pipeline
+1. **Discovery** (价值发现): max 5 rounds, 3-6 experts, Talent as strategist
+2. **Targeting** (标的锁定): max 2 rounds, 2-4 experts, Talent as stock_picker
+3. **Validation** (逻辑验证): max 1 round, 1-3 experts, Talent as auditor
+
+Mode switching via `--mode` controls which phases run (`discovery`, `targeting`, `validation`, `1+2`, `1+2+3`, `full`).
 
 ### Key files
 
 | File | Role |
 |------|------|
-| `src/vibe_engine/state.py` | Single source of truth for `VibeState` TypedDict. All node outputs are partial dicts that update this state. `expert_results` uses an Annotated reducer for fan-in appends. |
-| `src/vibe_engine/graph.py` | Builds and compiles the LangGraph `StateGraph`. Currently S1: `START → expert → END`. Grows each sprint. |
-| `src/vibe_engine/nodes/expert.py` | Factory `make_expert_node(expert_id)` — returns a closure that calls DeepSeek Reasoner and parses the 3-section output. Uses raw `openai.OpenAI` client (not LangChain) to capture `reasoning_content`. |
-| `src/vibe_engine/prompts/` | Prompt templates. Expert templates are `.md` files (`expert_system.md`, `expert_user.md`); loaded at call time via `_load()`. Talent/Planner templates still inline — migrate to `.md` in S3/S4. |
-| `src/vibe_engine/config.py` | `EXPERT_DIMENSIONS` (10 entries), `PHASE_CONFIGS`, model names, DeepSeek base URL. |
-| `src/vibe_engine/llm.py` | `get_chat_llm()` / `get_reasoner_llm()` — LangChain wrappers. **Not used by expert node** (use raw client there to get `reasoning_content`). Available for Planner (chat) in S4. |
-| `src/vibe_engine/cli.py` | Rich-based CLI. Must not be imported by graph/nodes (front-end separation constraint). |
+| `src/vibe_engine/state.py` | Single source of truth for `VibeState` TypedDict. All node outputs are partial dicts. `expert_results`, `talent_summaries`, `planner_decisions` use Annotated reducers for append. `target_phases` controls mode switching. |
+| `src/vibe_engine/graph.py` | Builds and compiles the LangGraph `StateGraph`. S5 topology: `fan_out → expert(s) → talent → planner → [iterate/proceed/abort]`. |
+| `src/vibe_engine/nodes/expert.py` | `expert_node(state: ExpertInput)` — calls DeepSeek Reasoner, parses 3-section output + phase-specific fields (targets, data_logic_chain). Uses raw `openai.OpenAI` client to capture `reasoning_content`. |
+| `src/vibe_engine/nodes/talent.py` | `talent_node(state)` — convergence node. Cross-compares expert results, outputs core_contradictions, emergent_hypothesis, synthesis_score. Role switches by phase. |
+| `src/vibe_engine/nodes/planner.py` | `planner_node(state)` — control valve. Evaluates sufficiency, generates Vibe mutations, selects experts, enforces round limits. Uses DeepSeek Chat. |
+| `src/vibe_engine/nodes/reporter.py` | `reporter_node(state)` — generates final structured investment report from all accumulated analysis. Uses DeepSeek Chat. |
+| `src/vibe_engine/prompts/` | Prompt templates. Expert: `.md` files in `experts/`. Talent/Planner/Report templates inline in `__init__.py`. |
+| `src/vibe_engine/config.py` | `EXPERT_DIMENSIONS` (10 entries), `PHASE_CONFIGS`, `PHASE_ORDER`, model names, DeepSeek base URL. |
+| `src/vibe_engine/llm.py` | `get_chat_llm()` / `get_reasoner_llm()` — LangChain wrappers. **Not used by expert/talent nodes** (they use raw client for `reasoning_content`). |
+| `src/vibe_engine/cli.py` | Rich-based CLI with full pipeline display. Must not be imported by graph/nodes (front-end separation constraint). |
 
 ### Model tiering (architecture constraint)
-- **Planner** → `deepseek-chat` (fast routing, JSON extraction)
+- **Planner / Reporter** → `deepseek-chat` (fast routing, JSON extraction, report writing)
 - **Expert / Talent** → `deepseek-reasoner` (deep reasoning); access via raw `openai.OpenAI` client to capture `msg.reasoning_content`
 
 ### Prompt file convention
-All new prompt templates go in `src/vibe_engine/prompts/` as `.md` files. Load with `_load("filename.md")` from `prompts/__init__.py`. Templates use Python `str.format()` placeholders (`{name}`, `{vibe}`, etc.).
+Expert prompt templates live in `src/vibe_engine/prompts/experts/expert_N.md`. Generic template in `expert_system.md`. Phase-specific instructions (targeting: require targets, validation: require data chain) injected via `EXPERT_PHASE_INSTRUCTIONS`. Talent/Planner/Report prompts are inline in `prompts/__init__.py` — use Python `str.format()` placeholders.
 
 ### FSM state update rules
 - Nodes return **partial dicts** — only the fields they modify.
-- `expert_results: Annotated[list[ExpertResult], lambda a, b: a + b]` — fan-in writes append, not overwrite.
+- `expert_results`, `talent_summaries`, `planner_decisions`: Annotated with append reducers — fan-in writes append, not overwrite.
 - All other fields use last-write-wins.
 - `cli.py` reads state but never writes back into the graph.
+- Planner clears `expert_results` on iterate (so Talent only sees fresh round results).
 
 ### Sprint plan
-S0 (scaffold) and S1 (single expert) are done. Remaining: S2 fan-out/fan-in, S3 Talent, S4 Planner loop, S5 three-phase pipeline, S6 CLI interactivity, S7 mode switching, S8 E2E validation. See `plan/claude_plan.md` for per-task checklists.
+S0–S5 are done. Remaining: S6 CLI interactivity (real-time streaming, `/think`, `/stop`), S7 config file override, S8 E2E validation. See `plan/claude_plan.md` for per-task checklists.

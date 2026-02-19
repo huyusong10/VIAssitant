@@ -88,5 +88,8 @@ class VibeState(TypedDict):
     selected_experts: list[int]      # Expert IDs selected for the current round
     abort_reason: str | None         # Populated on abort decision
 
+    # --- Mode Control ---
+    target_phases: list[str]         # Phases to run (e.g. ["discovery","targeting","validation"])
+
     # --- Future Extensions (Phase 2+) ---
     session_id: str | None           # Reserved for multi-session support
