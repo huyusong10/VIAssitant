@@ -589,7 +589,8 @@ def _build_vibe_completer():
         """Auto-complete slash commands with descriptions inline.
 
         Triggered when user types '/' — shows all matching commands
-        with their descriptions in a dropdown popup menu.
+        with their descriptions in a dropdown popup menu.  The menu
+        stays open as the user keeps typing to narrow the results.
         """
 
         def get_completions(self, document, complete_event):
@@ -600,10 +601,9 @@ def _build_vibe_completer():
                 return
 
             # Extract the typed portion after /
-            # Split to only match the command name portion (before any space)
+            # If user already typed a space, they're entering args — stop
             after_slash = text[1:]
             if " " in after_slash:
-                # Already typing arguments — don't show command completions
                 return
 
             typed = after_slash.lower()  # e.g. "" for "/", "he" for "/he"
@@ -628,47 +628,27 @@ def _build_vibe_completer():
 
 
 def _build_prompt_style():
-    """Build the prompt_toolkit style for the REPL prompt."""
+    """Build the prompt_toolkit style for the REPL prompt.
+
+    Uses hex colors for a premium Oceanic theme that looks clean on
+    both dark and light terminal backgrounds.
+    """
     from prompt_toolkit.styles import Style
     return Style.from_dict({
-        "prompt": "bold ansibrightcyan",
-        # Completion menu styling — dark background, bright text
-        "completion-menu":                       "bg:ansibrightblack ansiwhite",
-        "completion-menu.completion":            "bg:ansibrightblack ansiwhite",
-        "completion-menu.completion.current":    "bg:ansicyan ansiblack bold",
-        "completion-menu.meta.completion":        "bg:ansibrightblack ansibrightyellow",
-        "completion-menu.meta.completion.current": "bg:ansicyan ansiblack",
+        # Prompt
+        "prompt": "bold #5ccfe6",
+
+        # Completion menu — Oceanic palette
+        "completion-menu":                        "bg:#1a2332 #c7d5e0",
+        "completion-menu.completion":             "bg:#1a2332 #c7d5e0",
+        "completion-menu.completion.current":     "bg:#0d7377 #ffffff bold",
+        "completion-menu.meta.completion":         "bg:#1a2332 #5f8799",
+        "completion-menu.meta.completion.current":  "bg:#0d7377 #a0e8eb",
+
         # Scrollbar
-        "scrollbar.background": "bg:ansibrightblack",
-        "scrollbar.button":     "bg:ansicyan",
+        "scrollbar.background": "bg:#1a2332",
+        "scrollbar.button":     "bg:#0d7377",
     })
-
-
-def _build_key_bindings():
-    """Build key bindings for the REPL.
-
-    The '/' key is intercepted: it inserts the character AND immediately
-    triggers the completion popup so commands appear without needing to
-    press Tab.
-    """
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.filters import (
-        has_completions,
-        completion_is_selected,
-    )
-
-    kb = KeyBindings()
-
-    @kb.add("/", eager=True)
-    def _slash_handler(event):
-        """Insert '/' and immediately open the completion menu."""
-        buf = event.app.current_buffer
-        buf.insert_text("/")
-        # Only trigger completion if at the start of input (just typed '/')
-        if buf.document.text.strip() == "/":
-            buf.start_completion()
-
-    return kb
 
 
 def _build_prompt_session():
@@ -677,10 +657,10 @@ def _build_prompt_session():
     Features:
     - Typing '/' at the start of a line opens a dropdown of all commands
     - Each completion shows the command name + a description (display_meta)
-    - Arrow keys / Tab to navigate and select
-    - Continue typing to filter commands (e.g. '/ex' → /exit, /experts, /export)
-    - Pressing Enter on a completion inserts it
+    - Continue typing to narrow the list (e.g. '/ex' → /exit, /experts, /export)
+    - Arrow keys or Tab to navigate, Enter to select
     - Input history persisted across sessions
+    - Oceanic-themed color palette
     """
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
@@ -694,8 +674,7 @@ def _build_prompt_session():
         completer=_build_vibe_completer(),
         complete_while_typing=True,
         complete_in_thread=False,
-        reserve_space_for_menu=8,
-        key_bindings=_build_key_bindings(),
+        reserve_space_for_menu=12,
         history=FileHistory(histfile),
         enable_history_search=True,
     )
