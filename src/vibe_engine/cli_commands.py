@@ -80,7 +80,7 @@ class CommandRegistry:
             return True
 
         ctx.console.print(
-            f"[red]未知命令：/{cmd_name}[/red] [dim]使用 /help 查看可用命令[/dim]"
+            f"[red]未知命令：/{cmd_name}[/red]  使用 /help 查看可用命令"
         )
         return False
 
@@ -107,7 +107,7 @@ def cmd_help(ctx: CommandContext, args: list[str]):
             ctx.console.print(f"  {cmd.help_text}")
             if cmd.aliases:
                 ctx.console.print(
-                    f"  [dim]别名：{', '.join('/' + a for a in cmd.aliases)}[/dim]"
+                    f"  [italic]别名：{', '.join('/' + a for a in cmd.aliases)}[/italic]"
                 )
             ctx.console.print()
         else:
@@ -118,7 +118,7 @@ def cmd_help(ctx: CommandContext, args: list[str]):
     table = Table(
         title="[bold]可用命令[/bold]",
         show_header=True, header_style="bold cyan",
-        border_style="dim", padding=(0, 2),
+        border_style="cyan", padding=(0, 2),
     )
     table.add_column("命令", style="cyan", min_width=16)
     table.add_column("说明")
@@ -127,7 +127,7 @@ def cmd_help(ctx: CommandContext, args: list[str]):
         table.add_row(f"/{cmd.name}{usage_str}", cmd.help_text)
     ctx.console.print(table)
     ctx.console.print(
-        "\n[dim]提示：直接输入文本即作为 Vibe 启动分析 · Ctrl+C 中断分析[/dim]\n"
+        "\n[italic]提示：直接输入文本即作为 Vibe 启动分析 · Ctrl+C 中断分析[/italic]\n"
     )
 
 
@@ -147,7 +147,7 @@ def cmd_status(ctx: CommandContext, args: list[str]):
     from vibe_engine.cli_display import PHASE_NAMES
 
     if ctx.last_state is None:
-        ctx.console.print("[dim]尚未进行任何分析。输入 Vibe 开始。[/dim]")
+        ctx.console.print("尚未进行任何分析。输入 Vibe 开始。")
         return
 
     state = ctx.last_state
@@ -181,7 +181,7 @@ def cmd_think(ctx: CommandContext, args: list[str]):
     from vibe_engine.cli_display import PHASE_NAMES, display_expert_result
 
     if ctx.last_state is None:
-        ctx.console.print("[dim]尚无分析结果。请先输入 Vibe 进行分析。[/dim]")
+        ctx.console.print("尚无分析结果。请先输入 Vibe 进行分析。")
         return
 
     expert_results = ctx.last_state.get("expert_results", [])
@@ -199,19 +199,19 @@ def cmd_think(ctx: CommandContext, args: list[str]):
                 phase_label = PHASE_NAMES.get(r.get("phase", ""), "?")
                 ctx.console.print(
                     f"  [cyan]{eid:>2}[/cyan] · {ename}"
-                    f"  [dim]({phase_label} R{r.get('round_num', '?')}, "
-                    f"{think_len} chars)[/dim]"
+                    f"  ({phase_label} R{r.get('round_num', '?')}, "
+                    f"{think_len} chars)"
                 )
         if talent_summaries:
             ctx.console.print(f"  [yellow]talent[/yellow] · Talent 收敛节点")
-        ctx.console.print("\n[dim]用法：/think <编号> 或 /think talent[/dim]")
+        ctx.console.print("\n[italic]用法：/think <编号> 或 /think talent[/italic]")
         return
 
     target = args[0].strip().lower()
 
     if target == "talent":
         if not talent_summaries:
-            ctx.console.print("[dim]无 Talent 分析数据。[/dim]")
+            ctx.console.print("无 Talent 分析数据。")
             return
         for ts in talent_summaries:
             phase_label = PHASE_NAMES.get(ts.get("phase", ""), "?")
@@ -223,10 +223,10 @@ def cmd_think(ctx: CommandContext, args: list[str]):
             if think:
                 ctx.console.print(Panel(
                     think, border_style="cyan",
-                    title="[dim]reasoning trace[/dim]",
+                    title="reasoning trace",
                 ))
             else:
-                ctx.console.print("[dim]（无思考过程记录）[/dim]")
+                ctx.console.print("（无思考过程记录）")
         return
 
     # Support comma-separated IDs: /think 1,2,3
@@ -254,11 +254,11 @@ def cmd_experts(ctx: CommandContext, args: list[str]):
     ctx.console.print()
     table = Table(
         title="[bold]专家维度列表[/bold]",
-        show_header=True, header_style="bold cyan", border_style="dim",
+        show_header=True, header_style="bold cyan", border_style="cyan",
     )
     table.add_column("ID", style="bold cyan", justify="center", width=4)
     table.add_column("名称", min_width=16)
-    table.add_column("描述", style="dim")
+    table.add_column("描述")
     for d in EXPERT_DIMENSIONS:
         table.add_row(str(d["id"]), d["name"], d["description"])
     ctx.console.print(table)
@@ -270,7 +270,7 @@ def cmd_summary(ctx: CommandContext, args: list[str]):
     from vibe_engine.cli_display import PHASE_NAMES, display_expert_summary_table
 
     if ctx.last_state is None:
-        ctx.console.print("[dim]尚无分析结果。请先输入 Vibe 进行分析。[/dim]")
+        ctx.console.print("尚无分析结果。请先输入 Vibe 进行分析。")
         return
 
     state = ctx.last_state
@@ -314,14 +314,14 @@ def cmd_mode(ctx: CommandContext, args: list[str]):
 
     if not args:
         ctx.console.print(f"\n[bold]当前模式：[/bold] {ctx.mode}")
-        ctx.console.print(f"[dim]可用模式：{', '.join(valid_modes)}[/dim]")
-        ctx.console.print("[dim]用法：/mode <mode> 切换模式[/dim]\n")
+        ctx.console.print(f"可用模式：{', '.join(valid_modes)}")
+        ctx.console.print("[italic]用法：/mode <mode> 切换模式[/italic]\n")
         return
 
     new_mode = args[0].strip().lower()
     if new_mode not in valid_modes:
         ctx.console.print(f"[red]无效模式：{new_mode}[/red]")
-        ctx.console.print(f"[dim]可用模式：{', '.join(valid_modes)}[/dim]")
+        ctx.console.print(f"可用模式：{', '.join(valid_modes)}")
         return
 
     if ctx.set_mode:

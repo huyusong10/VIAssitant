@@ -1,12 +1,16 @@
 """Display components for the Vibe Investment Engine CLI.
 
-Extracted from cli.py to support the REPL architecture (C1).
 Pure rendering functions — no state, no side effects beyond console output.
+All styles follow the Oceanic theme (cyan chrome, semantic accents).
+
+IMPORTANT: Avoids the ANSI 'dim' attribute (SGR 2) entirely because it
+renders incorrectly in many terminals (Tabby, some iTerm2 profiles, etc.).
+Secondary text is conveyed through lack of bold/color, or via 'italic'.
 """
 
 from typing import Any
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.rule import Rule
@@ -33,42 +37,43 @@ MODE_TO_PHASES = {
 
 
 def display_welcome(console: Console, interactive: bool = True):
-    """Display the compact welcome banner and quick help."""
-    title = Text()
-    title.append("⚡ ", style="yellow")
-    title.append("VIBE", style="bold")
-    title.append(" · ", style="dim")
-    title.append("Multi-Agent Investment Engine", style="cyan")
+    """Display the welcome banner and quick help.
 
-    subtitle = Text()
-    subtitle.append(f"v{VERSION}", style="dim")
-    subtitle.append(" · Phase 1 · ", style="dim")
-    subtitle.append("DeepSeek Powered", style="dim blue")
-
-    banner_content = Group(Align.center(title), Align.center(subtitle))
-
+    Uses Rule instead of Panel for the banner — better resize tolerance
+    and avoids box-drawing issues in some terminals.
+    Uses Rich Table for help items — proper CJK width calculation.
+    """
     console.print()
-    console.print(Panel(banner_content, border_style="cyan", padding=(0, 2), expand=False))
+    console.print(
+        Rule(
+            "[bold cyan]⚡ VIBE · Multi-Agent Investment Engine[/bold cyan]",
+            style="cyan",
+        )
+    )
+    console.print(Align.center(Text(f"v{VERSION} · Phase 1 · DeepSeek Powered")))
+    console.print()
 
     if interactive:
+        console.print("  输入你的投资直觉开始分析，或使用以下命令：")
         console.print()
-        console.print("  [dim]输入你的投资直觉开始分析，或使用以下命令：[/dim]")
-        console.print()
-        help_items = [
-            ("/help", "显示帮助"),
-            ("/think N", "查看专家思考"),
-            ("/experts", "专家列表"),
-            ("/mode M", "切换模式"),
-            ("/summary", "查看摘要"),
-            ("/exit", "退出"),
-        ]
-        for i in range(0, len(help_items), 2):
-            left = help_items[i]
-            right = help_items[i + 1] if i + 1 < len(help_items) else None
-            line = f"  [bold cyan]{left[0]:<12}[/bold cyan] [dim]{left[1]:<12}[/dim]"
-            if right:
-                line += f"    [bold cyan]{right[0]:<12}[/bold cyan] [dim]{right[1]}[/dim]"
-            console.print(line)
+        # Use Rich Table for proper CJK character width alignment.
+        # Manual f-string padding like {text:<12} is broken for CJK
+        # because Python counts characters, not display width.
+        table = Table(
+            show_header=False,
+            box=None,
+            padding=(0, 2),
+            show_edge=False,
+            pad_edge=True,
+        )
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(no_wrap=True)
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(no_wrap=True)
+        table.add_row("/help", "显示帮助", "/think N", "查看专家思考")
+        table.add_row("/experts", "专家列表", "/mode M", "切换模式")
+        table.add_row("/summary", "查看摘要", "/exit", "退出")
+        console.print(table)
         console.print()
 
 
@@ -105,19 +110,19 @@ def display_expert_result(console: Console, result: dict, show_think: bool = Fal
             Panel(
                 result["think_content"],
                 border_style="cyan",
-                title="[dim]reasoning trace[/dim]",
+                title="reasoning trace",
             )
         )
 
 
 def display_expert_summary_table(console: Console, expert_results: list[dict]):
     """Display a summary table of all expert results."""
-    console.print(Rule("[bold]专家分析摘要[/bold]"))
-    table = Table(show_header=True, header_style="bold cyan")
+    console.print(Rule("[bold cyan]专家分析摘要[/bold cyan]"))
+    table = Table(show_header=True, header_style="bold cyan", border_style="cyan")
     table.add_column("专家", style="cyan", max_width=20)
-    table.add_column("阶段/轮次", style="dim", max_width=15)
+    table.add_column("阶段/轮次", max_width=15)
     table.add_column("结论摘要", max_width=50)
-    table.add_column("Think", style="dim", justify="right")
+    table.add_column("Think", justify="right")
     for r in expert_results:
         phase_label = PHASE_NAMES.get(r.get("phase", ""), r.get("phase", "?"))
         round_label = f"R{r.get('round_num', '?')}"
@@ -140,10 +145,10 @@ def display_final_results(console: Console, state: dict, interactive_think: bool
     vibe_history = state.get("vibe_history", [])
 
     if len(vibe_history) > 1:
-        console.print(Rule("[bold]Vibe 演变轨迹[/bold]"))
+        console.print(Rule("[bold cyan]Vibe 演变轨迹[/bold cyan]"))
         for i, v in enumerate(vibe_history):
             label = "Vibe_0 (原始)" if i == 0 else f"Vibe_{i} (变异)"
-            console.print(f"  [dim]{label}:[/dim] {v}")
+            console.print(f"  {label}: {v}")
 
     if abort_reason:
         console.print(
@@ -158,7 +163,7 @@ def display_final_results(console: Console, state: dict, interactive_think: bool
         display_expert_summary_table(console, expert_results)
 
     if interactive_think and expert_results:
-        console.print("\n[dim]输入专家编号可查看完整推理过程，按 Enter 退出[/dim]")
+        console.print("\n输入专家编号可查看完整推理过程，按 Enter 退出")
         _prompt_think_view_legacy(console, expert_results)
 
 
@@ -166,8 +171,8 @@ def _prompt_think_view_legacy(console: Console, all_results: list[dict]):
     """Legacy interactive loop for think viewing (non-REPL mode)."""
     while True:
         console.print(
-            "\n[dim]输入专家编号查看完整思考过程（如 [bold]2[/bold]），"
-            "或按 [bold]Enter[/bold] 退出：[/dim]",
+            "\n输入专家编号查看完整思考过程（如 [bold]2[/bold]），"
+            "或按 [bold]Enter[/bold] 退出：",
             end=" ",
         )
         try:
@@ -215,7 +220,7 @@ def render_completion_banner(console: Console, state: dict, elapsed: float):
 
     console.print(
         f"\n[bold {style}]{icon} 分析{label}[/bold {style}]"
-        f" [dim]·[/dim] {len(phases_run)} 阶段"
-        f" [dim]·[/dim] {expert_count} 位专家"
-        f" [dim]·[/dim] 耗时 {time_str}"
+        f" · {len(phases_run)} 阶段"
+        f" · {expert_count} 位专家"
+        f" · 耗时 {time_str}"
     )

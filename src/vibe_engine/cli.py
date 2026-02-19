@@ -143,7 +143,7 @@ class StreamProcessor:
             status_text.append("\nThinking Experts:\n", style="bold")
             for eid in sorted(self.pending_experts):
                 ename = self.expert_map.get(eid, "?")
-                status_text.append(f"  ⏳ [{eid}] {ename}...\n", style="dim")
+                status_text.append(f"  ⏳ [{eid}] {ename}...\n")
         else:
             status_text.append(f"\n{self.current_action}\n", style="cyan")
 
@@ -351,7 +351,7 @@ class VibeREPL:
                 self._handle_vibe(raw)
 
         self._save_history()
-        self.console.print("\n[dim]再见！👋[/dim]\n")
+        self.console.print("\n再见！👋\n")
 
     def _dispatch_command(self, raw: str):
         """Build context and dispatch a slash command."""
@@ -372,8 +372,8 @@ class VibeREPL:
             self.last_state = run_analysis(vibe, self.mode, self.console)
             display_final_results(self.console, self.last_state, interactive_think=False)
             self.console.print(
-                "\n[dim]使用 [bold]/think N[/bold] 查看专家推理 · "
-                "[bold]/summary[/bold] 查看摘要 · 输入新 Vibe 继续分析[/dim]\n"
+                "\n[italic]使用 [bold]/think N[/bold] 查看专家推理 · "
+                "[bold]/summary[/bold] 查看摘要 · 输入新 Vibe 继续分析[/italic]\n"
             )
         finally:
             self.is_analyzing = False
