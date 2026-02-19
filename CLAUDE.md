@@ -84,7 +84,9 @@ Mode switching via `--mode` controls which phases run (`discovery`, `targeting`,
 | `src/vibe_engine/prompts/` | Prompt templates. Expert: `.md` files in `experts/`. Planner has two prompt sets: `PLANNER_INITIAL_*` (first round) and `PLANNER_*` (evaluation rounds). Talent/Report templates inline in `__init__.py`. All use `str.format()` placeholders. |
 | `src/vibe_engine/config.py` | `EXPERT_DIMENSIONS` (10 entries), `PHASE_CONFIGS`, `PHASE_ORDER`, model names, DeepSeek base URL. |
 | `src/vibe_engine/llm.py` | `get_chat_llm()` / `get_reasoner_llm()` — LangChain wrappers. **Not used by expert/talent nodes** (they use raw client for `reasoning_content`). |
-| `src/vibe_engine/cli.py` | Rich-based CLI with full pipeline display. Initial state sets `selected_experts: []` (Planner selects on first round). Must not be imported by graph/nodes (front-end separation constraint). |
+| `src/vibe_engine/cli.py` | **REPL + one-shot CLI entry point** (C1 refactored). Two modes: (1) REPL mode (no `--vibe`): interactive loop via `VibeREPL` class with slash command dispatch. (2) One-shot mode (`--vibe` provided): backward-compatible single-run. `run_analysis()` is the shared graph execution function. `StreamProcessor` handles real-time stream events. Must not be imported by graph/nodes. |
+| `src/vibe_engine/cli_display.py` | Pure rendering functions extracted from cli.py. `display_welcome()` (compact banner + quick help), `display_expert_result()`, `display_final_results()`, `display_expert_summary_table()`, `render_completion_banner()`. Constants: `PHASE_NAMES`, `MODE_TO_PHASES`, `VERSION`. |
+| `src/vibe_engine/cli_commands.py` | Slash command system. `CommandRegistry` with register/dispatch and alias support. `CommandContext` dataclass for handler args. 8 built-in commands: `/help`, `/exit`, `/clear`, `/status`, `/think` (expert + talent + comma IDs), `/experts`, `/summary`, `/mode`. |
 
 ### Model tiering (architecture constraint)
 - **Planner / Reporter** → `deepseek-chat` (fast routing, JSON extraction, report writing)
@@ -115,4 +117,4 @@ The Planner maps LLM decisions to `routing_action` internally:
 This keeps LLM prompts simple (proceed/iterate/abort) while centralizing routing logic in `planner_node`.
 
 ### Sprint plan
-S0–S6 are done. Phase A-D architecture corrections are done. Remaining: S7 config file override, S8 E2E validation. See `plan/claude_plan.md` for per-task checklists.
+S0–S6 are done. Phase A-D architecture corrections are done. **C1 CLI REPL + C2 core commands are done** (see `plan/cli_optimization_plan.md`). Remaining: S7 config file override, S8 E2E validation, CLI optimization phases C3–C8.
